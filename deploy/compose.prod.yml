@@ -1,0 +1,5 @@
+# Surcharge utilisée uniquement sur le PC fixe, par deploy/pull-deploy.ps1 :
+# l'API tourne avec l'image construite et testée par la CI, au lieu d'être construite localement.
+services:
+  api:
+    image: ghcr.io/${GHCR_OWNER:?GHCR_OWNER manquant}/rag-local-api:${APP_VERSION:?APP_VERSION manquant}

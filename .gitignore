@@ -1,0 +1,23 @@
+# Secrets : ne jamais commiter
+.env
+*.env
+!.env.example
+
+# État local du déploiement (PC fixe)
+deploy/.last-deployed
+deploy/.last-failed
+deploy/deploy.log
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# Éditeurs / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
