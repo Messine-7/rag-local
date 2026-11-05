@@ -1,4 +1,4 @@
-# Surcharge utilisée uniquement sur le PC fixe, par deploy/pull-deploy.ps1 :
+# Surcharge utilisée uniquement sur le PC fixe, par deploy/pull-deploy.sh :
 # l'API tourne avec l'image construite et testée par la CI ; aucune construction possible ici.
 services:
   api:
