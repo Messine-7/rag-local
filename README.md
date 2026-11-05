@@ -15,7 +15,7 @@ flowchart LR
   L["Laptop<br/>dev + client"] -- git push --> G["GitHub<br/>CI + ghcr.io"]
   P -- "pull : commit + image testée" --> G
   L -- "Tailscale (HTTPS)" --> A
-  subgraph P["PC fixe — Docker Compose"]
+  subgraph P["PC fixe — Docker Compose dans WSL"]
     A["API FastAPI"]
   end
 ```
@@ -53,9 +53,9 @@ ruff check . && ruff format --check . && pytest
    seule fois, tests pytest dans un conteneur créé à partir de cette image, puis test de
    démarrage (`/health` doit répondre).
 2. Si tout passe, cette même image est publiée sur `ghcr.io/messine-7/rag-local-api`, taguée avec le commit.
-3. Sur la machine hôte, une tâche planifiée (`deploy/pull-deploy.ps1`) vérifie `main` toutes les
-   2 minutes. Dès que l'image du dernier commit existe, elle met à jour le clone et relance
-   les conteneurs ; sinon elle ne touche à rien.
+3. Sur la machine hôte (Windows + Docker dans WSL), un timer systemd lance `deploy/pull-deploy.sh`
+   toutes les 2 minutes. Dès que l'image du dernier commit existe, le script met à jour le clone
+   et relance les conteneurs ; sinon il ne touche à rien.
 4. Si la nouvelle version ne démarre pas, le script relance la précédente. Il ne garde que
    l'image en service et la précédente, pour libérer le disque.
 
@@ -69,5 +69,5 @@ ruff check . && ruff format --check . && pytest
 | `worker/` | ingestion PDF (à venir) |
 | `client/` | client en ligne de commande (à venir) |
 | `tests/` | tests pytest |
-| `deploy/` | déploiement pull sur la machine hôte |
+| `deploy/` | déploiement pull sur la machine hôte (`install-timer.sh` l'installe) |
 | `.github/workflows/` | CI et publication de l'image |
