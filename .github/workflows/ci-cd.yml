@@ -1,5 +1,9 @@
 name: CI/CD
 
+# Pas de runner self-hosted : le repo est public. La CI construit l'image une seule fois,
+# la teste, puis publie cette même image sur ghcr.io ; le PC fixe vient la chercher
+# lui-même (deploy/pull-deploy.ps1).
+
 on:
   push:
     branches: [main]
@@ -10,53 +14,61 @@ permissions:
 
 jobs:
   ci:
-    name: Lint, tests, build
+    name: Lint, build, tests, publication
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # utilisé uniquement par l'étape de publication, sur main
     steps:
       - uses: actions/checkout@v6
 
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: requirements-dev.txt
-
-      - name: Dépendances
-        run: pip install -r requirements-dev.txt
 
       - name: Lint
         run: |
+          pip install --quiet "ruff>=0.6"
           ruff check .
           ruff format --check .
 
-      - name: Tests
-        run: pytest
+      - name: Nom de l'image
+        # ghcr.io impose des minuscules
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/rag-local-api" >> "$GITHUB_ENV"
 
-      - name: Build de l'image API
-        run: docker build -t rag-api:ci ./api
-
-  # Pas de runner self-hosted : le repo est public. La CI publie l'image testée sur ghcr.io,
-  # et le PC fixe vient la chercher lui-même (deploy/pull-deploy.ps1).
-  publish:
-    name: Publication de l'image (ghcr.io)
-    needs: ci
-    # uniquement sur un push vers main, jamais sur une pull request
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Connexion à ghcr.io
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-
-      - name: Build et push (tags = commit et main)
+      - name: Build de l'image (une seule fois)
         run: |
-          IMAGE="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/rag-local-api"
           docker build \
             --label "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
             --label "org.opencontainers.image.revision=${{ github.sha }}" \
-            -t "$IMAGE:${{ github.sha }}" -t "$IMAGE:main" ./api
+            -t "$IMAGE:$GITHUB_SHA" ./api
+
+      - name: Tests dans l'image
+        # Conteneur jetable créé à partir de l'image : pytest y est installé,
+        # l'image elle-même ne change pas.
+        run: |
+          docker run --rm \
+            -v "$PWD/tests:/app/tests:ro" \
+            -v "$PWD/requirements-test.txt:/tmp/requirements-test.txt:ro" \
+            -e PYTHONDONTWRITEBYTECODE=1 \
+            "$IMAGE:$GITHUB_SHA" \
+            sh -c "pip install --quiet --no-cache-dir --root-user-action=ignore -r /tmp/requirements-test.txt && python -m pytest -p no:cacheprovider tests"
+
+      - name: Test de démarrage
+        # L'image est lancée comme en production ; /health doit répondre en moins de 30 s.
+        run: |
+          docker run -d --name smoke -p 127.0.0.1:8000:8000 "$IMAGE:$GITHUB_SHA"
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8000/health; then exit 0; fi
+            sleep 1
+          done
+          docker logs smoke
+          exit 1
+
+      - name: Publication sur ghcr.io (tags = commit et main)
+        # uniquement sur un push vers main, jamais sur une pull request
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker tag "$IMAGE:$GITHUB_SHA" "$IMAGE:main"
           docker push --all-tags "$IMAGE"

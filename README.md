@@ -1,6 +1,6 @@
 # RAG local
 
-![CI/CD](https://github.com/<ton-compte>/rag-local/actions/workflows/ci-cd.yml/badge.svg)
+![CI/CD](https://github.com/messine-7/rag-local/actions/workflows/ci-cd.yml/badge.svg)
 
 Assistant de questions-réponses sur des documents PDF et une base PostgreSQL, entièrement
 auto-hébergé : modèles, base vectorielle et API tournent sur une machine personnelle,
@@ -24,15 +24,15 @@ flowchart LR
 |---|---|---|
 | API | FastAPI (async) | plusieurs questions servies en parallèle |
 | Réseau | Tailscale + `tailscale serve` | aucun port ouvert sur la box, HTTPS automatique |
-| CI | GitHub Actions | lint (ruff), tests (pytest), build de l'image |
-| CD | déploiement « pull » | le repo est public : aucun code venu de GitHub ne s'exécute sur la machine hôte, elle récupère seulement l'image validée par la CI |
+| CI | GitHub Actions | lint (ruff), puis une seule image construite, testée (pytest, démarrage) et publiée |
+| CD | déploiement « pull » | le repo est public : aucun code venu de GitHub ne s'exécute sur la machine hôte, elle récupère seulement l'image validée par la CI, et revient seule à la version précédente si la nouvelle ne démarre pas |
 
 ## Lancer en local
 
 Prérequis : Docker.
 
 ```bash
-git clone https://github.com/<ton-compte>/rag-local.git
+git clone https://github.com/messine-7/rag-local.git
 cd rag-local
 docker compose up -d --build --wait
 curl http://localhost:8000/health
@@ -49,11 +49,15 @@ ruff check . && ruff format --check . && pytest
 
 ## Déploiement
 
-1. Chaque push sur `main` lance la CI (lint, tests, build) sur les runners GitHub.
-2. Si elle passe, l'image est publiée sur `ghcr.io/<ton-compte>/rag-local-api`, taguée avec le commit.
+1. Chaque push sur `main` lance la CI sur les runners GitHub : lint, build de l'image une
+   seule fois, tests pytest dans un conteneur créé à partir de cette image, puis test de
+   démarrage (`/health` doit répondre).
+2. Si tout passe, cette même image est publiée sur `ghcr.io/messine-7/rag-local-api`, taguée avec le commit.
 3. Sur la machine hôte, une tâche planifiée (`deploy/pull-deploy.ps1`) vérifie `main` toutes les
    2 minutes. Dès que l'image du dernier commit existe, elle met à jour le clone et relance
    les conteneurs ; sinon elle ne touche à rien.
+4. Si la nouvelle version ne démarre pas, le script relance la précédente. Il ne garde que
+   l'image en service et la précédente, pour libérer le disque.
 
 `GET /health` renvoie le commit déployé dans le champ `version`.
 
