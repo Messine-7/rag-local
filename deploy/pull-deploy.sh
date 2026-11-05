@@ -77,6 +77,15 @@ if ! git merge --ff-only --quiet origin/main; then
 fi
 
 log "déploiement de $target"
+
+# Images de tous les services (Ollama compris) téléchargées avant de toucher à quoi que ce soit.
+# En cas d'échec (réseau), rien n'est marqué en échec : nouvel essai au prochain passage.
+export APP_VERSION="$target"
+if ! "${compose[@]}" pull --quiet 2>&1 | log_output; then
+  log "téléchargement des images impossible, nouvel essai au prochain passage"
+  exit 1
+fi
+
 if start_version "$target"; then
   echo "$target" >"$state_file"
   log "déployé $target"

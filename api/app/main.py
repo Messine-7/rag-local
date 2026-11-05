@@ -2,7 +2,10 @@ import os
 
 from fastapi import FastAPI
 
+from app.routes_llm import router as llm_router
+
 app = FastAPI(title="RAG local")
+app.include_router(llm_router)
 
 
 @app.get("/health")

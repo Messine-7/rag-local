@@ -4,9 +4,13 @@ services:
   api:
     build: ./api
     ports:
-      - "127.0.0.1:8000:8000"   # seul port publié, et seulement sur localhost (relayé par tailscale serve)
+      - "127.0.0.1:8000:8000" # seul port publié, et seulement sur localhost (relayé par tailscale serve)
     environment:
       APP_VERSION: ${APP_VERSION:-dev}
+      LLM_BASE_URL: http://ollama:11434/v1
+      LLM_MODEL: ${LLM_MODEL:-mistral-small3.2:24b}
+      LLM_ALLOWED_MODELS: ${LLM_ALLOWED_MODELS:-mistral-small3.2:24b,gemma4:12b}
+      EMBED_MODEL: ${EMBED_MODEL:-bge-m3}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
@@ -15,4 +19,30 @@ services:
       retries: 10
       start_period: 5s
 
-# Phases suivantes : db (pgvector), ollama, worker — sans "ports:", joints par leur nom de service.
+  # Serveur de modèles (génération + embeddings). Aucun port publié : seule l'API le joint,
+  # par son nom de service. Sans GPU (laptop), il tourne sur le CPU ; le GPU est ajouté sur
+  # le PC fixe par deploy/compose.prod.yml.
+  ollama:
+    image: ollama/ollama:0.40.12
+    volumes:
+      - ollama:/root/.ollama # modèles téléchargés, conservés d'un déploiement à l'autre
+    environment:
+      # Mémoire GPU réservée pour le contexte ≈ OLLAMA_NUM_PARALLEL × OLLAMA_CONTEXT_LENGTH
+      OLLAMA_NUM_PARALLEL: ${OLLAMA_NUM_PARALLEL:-4}
+      OLLAMA_CONTEXT_LENGTH: ${OLLAMA_CONTEXT_LENGTH:-8192}
+      OLLAMA_MAX_LOADED_MODELS: ${OLLAMA_MAX_LOADED_MODELS:-2} # LLM + embeddings chargés ensemble
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-24h} # pas de rechargement entre deux questions
+      OLLAMA_FLASH_ATTENTION: "1"
+      OLLAMA_KV_CACHE_TYPE: q8_0 # cache de contexte en 8 bits : environ deux fois moins de mémoire
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+
+volumes:
+  ollama:
+
+# Phases suivantes : db (pgvector) et worker — sans "ports:", joints par leur nom de service.

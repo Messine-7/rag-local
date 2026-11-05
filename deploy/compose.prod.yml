@@ -1,6 +1,15 @@
-# Surcharge utilisée uniquement sur le PC fixe, par deploy/pull-deploy.sh :
+# Surcharge utilisée uniquement sur le PC fixe, par deploy/pull-deploy.sh et deploy/compose.sh :
 # l'API tourne avec l'image construite et testée par la CI ; aucune construction possible ici.
 services:
   api:
     build: !reset null # efface le "build: ./api" de docker-compose.yml (Compose 2.24 ou plus)
     image: ghcr.io/${GHCR_OWNER:?GHCR_OWNER manquant}/rag-local-api:${APP_VERSION:?APP_VERSION manquant}
+
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia # GPU injecté par le NVIDIA Container Toolkit
+              count: all
+              capabilities: [gpu]
