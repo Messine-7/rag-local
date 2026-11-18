@@ -1,0 +1,9 @@
+# Fichiers envoyés au build de api/Dockerfile (contexte = racine du repo).
+# Liste blanche : tout est exclu, sauf ce dont l'image a besoin. Un fichier <Dockerfile>.dockerignore
+# s'applique à ce seul Dockerfile : le futur worker aura le sien.
+*
+!pyproject.toml
+!uv.lock
+!api/app
+**/__pycache__
+**/*.pyc

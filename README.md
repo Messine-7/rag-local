@@ -54,11 +54,69 @@ Documentation interactive : `/docs`.
 
 ## Développer
 
+Les dépendances Python sont gérées avec [uv](https://docs.astral.sh/uv/) : `pyproject.toml`
+les déclare, `uv.lock` fige les versions exactes. Ces deux fichiers servent partout : poste de
+dev, image Docker (`uv sync --frozen --no-dev`) et tests en CI. Il n'y a pas de
+`requirements.txt`.
+
+### Installer uv (une fois par machine)
+
 ```bash
-python -m venv .venv
-# Windows : .venv\Scripts\activate   —   Linux : source .venv/bin/activate
-pip install -r requirements-dev.txt
-ruff check . && ruff format --check . && pytest
+# Windows (PowerShell)
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+# Linux / WSL / macOS
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+### Préparer l'environnement
+
+```bash
+uv sync
+```
+
+`uv sync` télécharge Python 3.12 si besoin (version fixée par `.python-version`), crée `.venv/`
+et y installe exactement les versions de `uv.lock` : dépendances de l'API, plus le groupe `dev`
+(pytest, httpx, ruff). Pas besoin d'activer le venv : `uv run` l'utilise directement.
+
+### Vérifier avant de pousser
+
+```bash
+uv run ruff check .
+uv run ruff format --check .
+uv run pytest
+```
+
+### Ajouter ou mettre à jour une dépendance
+
+```bash
+uv add "fastapi>=0.115"             # dépendance de l'API (image Docker)
+uv add --group test "pytest-asyncio" # outil de test (installé en CI)
+uv add --group dev "mypy"           # outil du poste de dev seulement
+uv lock --upgrade-package openai    # monter une version dans les bornes de pyproject.toml
+```
+
+Committer `pyproject.toml` et `uv.lock` ensemble. La CI échoue si `uv.lock` ne correspond
+plus à `pyproject.toml` (`uv lock --locked`).
+
+| Fichier | Rôle | Modifié par |
+|---|---|---|
+| `pyproject.toml` | dépendances déclarées (bornes), groupes `test` et `dev`, version d'uv imposée | `uv add` / `uv remove` |
+| `uv.lock` | versions exactes de toutes les dépendances, pour toutes les plateformes | `uv lock`, `uv add` |
+| `.python-version` | version de Python du poste de dev (celle de l'image : 3.12) | `uv python pin` |
+
+### Version d'uv
+
+`pyproject.toml` impose une version d'uv (`required-version`), lue aussi par la CI ; l'image
+copie la même depuis `ghcr.io/astral-sh/uv` (`api/Dockerfile`). Pour en changer : modifier les
+deux, puis `uv self update` sur le poste de dev.
+
+### Construire l'image à la main
+
+Le contexte de build est la racine du repo (pour `pyproject.toml` et `uv.lock`) ; les fichiers
+envoyés sont listés dans `api/Dockerfile.dockerignore`.
+
+```bash
+docker build -f api/Dockerfile -t rag-local-api .
 ```
 
 ## Déploiement

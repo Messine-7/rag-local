@@ -2,6 +2,30 @@
 name = "rag-local"
 version = "0.1.0"
 requires-python = ">=3.12"
+# Dépendances de l'API : seules celles-ci sont installées dans l'image Docker (uv sync --no-dev).
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "openai>=2.0,<3",
+]
+
+[dependency-groups]
+# Ajoutées par la CI dans un conteneur jetable créé à partir de l'image, pour pytest.
+test = [
+    "pytest>=8",
+    "httpx>=0.27",
+]
+# Poste de développement : « uv sync » installe ce groupe par défaut.
+dev = [
+    { include-group = "test" },
+    "ruff>=0.6",
+]
+
+[tool.uv]
+package = false # application, pas une bibliothèque : rien à construire ni à publier sur PyPI
+# Même version d'uv sur le poste de dev, en CI (setup-uv lit ce champ) et dans l'image
+# (api/Dockerfile : à changer en même temps).
+required-version = ">=0.13.9,<0.14"
 
 [tool.pytest.ini_options]
 pythonpath = ["api"]

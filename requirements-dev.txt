@@ -1,3 +1,0 @@
--r api/requirements.txt
--r requirements-test.txt
-ruff>=0.6

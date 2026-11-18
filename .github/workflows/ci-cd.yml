@@ -2,7 +2,7 @@ name: CI/CD
 
 # Pas de runner self-hosted : le repo est public. La CI construit l'image une seule fois,
 # la teste, puis publie cette même image sur ghcr.io ; le PC fixe vient la chercher
-# lui-même (deploy/pull-deploy.ps1).
+# lui-même (deploy/pull-deploy.sh).
 
 on:
   push:
@@ -22,15 +22,20 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v7
+        # version d'uv lue dans pyproject.toml (tool.uv.required-version) ;
+        # Python 3.12 (.python-version) est téléchargé par uv au besoin
+
+      - name: uv.lock à jour
+        # Échoue si pyproject.toml a changé sans « uv lock » : l'image serait construite
+        # avec d'anciennes versions. Correctif : uv lock, puis committer uv.lock.
+        run: uv lock --locked
 
       - name: Lint
+        # ruff à la version de uv.lock, comme sur le poste de dev
         run: |
-          pip install --quiet "ruff>=0.6"
-          ruff check .
-          ruff format --check .
+          uv run --frozen ruff check .
+          uv run --frozen ruff format --check .
 
       - name: Nom de l'image
         # ghcr.io impose des minuscules
@@ -41,18 +46,18 @@ jobs:
           docker build \
             --label "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
             --label "org.opencontainers.image.revision=${{ github.sha }}" \
-            -t "$IMAGE:$GITHUB_SHA" ./api
+            -f api/Dockerfile \
+            -t "$IMAGE:$GITHUB_SHA" .
 
       - name: Tests dans l'image
-        # Conteneur jetable créé à partir de l'image : pytest y est installé,
-        # l'image elle-même ne change pas.
+        # Conteneur jetable créé à partir de l'image : le groupe « test » de uv.lock y est
+        # ajouté (pytest, httpx), l'image elle-même ne change pas.
         run: |
           docker run --rm \
             -v "$PWD/tests:/app/tests:ro" \
-            -v "$PWD/requirements-test.txt:/tmp/requirements-test.txt:ro" \
             -e PYTHONDONTWRITEBYTECODE=1 \
             "$IMAGE:$GITHUB_SHA" \
-            sh -c "pip install --quiet --no-cache-dir --root-user-action=ignore -r /tmp/requirements-test.txt && python -m pytest -p no:cacheprovider tests"
+            uv run --frozen --no-default-groups --group test python -m pytest -p no:cacheprovider tests
 
       - name: Test de démarrage
         # L'image est lancée comme en production ; /health doit répondre en moins de 30 s.
