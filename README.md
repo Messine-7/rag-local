@@ -6,7 +6,8 @@ Assistant de questions-réponses sur des documents PDF et une base PostgreSQL, e
 auto-hébergé : modèles, base vectorielle et API tournent sur une machine personnelle,
 interrogée à distance via un réseau privé.
 
-> Projet en construction, phase par phase. Phase actuelle : serveurs de modèles (Ollama sur GPU).
+> Projet en construction, phase par phase. Phase actuelle : ingestion des PDF (Postgres + pgvector).
+> Phase précédente : serveurs de modèles (Ollama sur GPU), terminée — voir [Mesurer](#mesurer).
 
 ## Architecture
 
@@ -153,8 +154,23 @@ Latence et débit à 1, 4 et 8 requêtes simultanées, depuis n'importe quelle m
 l'API (aucune dépendance) :
 
 ```bash
-python scripts/bench_llm.py --url https://<machine-hôte> --model mistral-small3.2:24b --model gemma4:12b
+uv run scripts/bench_llm.py --url https://<machine-hôte> --model mistral-small3.2:24b --model gemma4:12b
 ```
+
+Sous Windows PowerShell 5.1, pour un affichage correct des accents et un fichier en UTF-8 :
+`$env:PYTHONUTF8 = 1` avant la commande, et `| Out-File -Encoding utf8 bench.md` plutôt que
+`Tee-Object` (qui écrit en UTF-16).
+
+Résultats sur RTX 3090 (24 Go), Ollama, `OLLAMA_NUM_PARALLEL=4`, réponses de 256 tokens —
+détail et analyse dans [docs/benchmarks/2026-11-18-ollama.md](docs/benchmarks/2026-11-18-ollama.md) :
+
+| Modèle | Concurrence | Latence p50 (s) | Débit par requête (tok/s) | Débit total (tok/s) |
+|---|---|---|---|---|
+| mistral-small3.2:24b | 1 / 4 / 8 | 5.1 / 8.6 / 16.1 | 50 / 30 / 20 | 50 / 118 / 127 |
+| gemma4:12b | 1 / 4 / 8 | 2.0 / 3.2 / 6.5 | 129 / 81 / 49 | 129 / 317 / 310 |
+
+Chargement d'un modèle en VRAM : 31 s (Mistral), 14 s (Gemma). Au-delà de 4 requêtes
+simultanées, le débit plafonne (`NUM_PARALLEL`) et les suivantes attendent leur tour.
 
 ## Structure
 
@@ -166,4 +182,5 @@ python scripts/bench_llm.py --url https://<machine-hôte> --model mistral-small3
 | `tests/` | tests pytest |
 | `deploy/` | déploiement pull sur la machine hôte (`install-timer.sh` l'installe, `compose.sh` pour l'exploitation) |
 | `scripts/` | outils (benchmark du serveur de modèles) |
+| `docs/` | résultats de mesures (`benchmarks/`) |
 | `.github/workflows/` | CI et publication de l'image |
