@@ -64,6 +64,8 @@ sur le CPU (lent, plutôt pour de petits modèles).
 | `POST /documents` | envoie un PDF à indexer (multipart, champs `file` et `collection`, `défaut` sinon) ; 202 : mis dans la file, 200 : déjà indexé ; droit d'écriture requis |
 | `GET /documents` | documents des collections accessibles, et état de leur ingestion |
 | `GET /collections` | collections accessibles, avec son droit (`read` ou `write`) |
+| `POST /ask` | question sur les documents accessibles (`question`, `conversation_id`, `model`, `collections`, `stream`) ; réponse en SSE avec citations `[n]` |
+| `GET /conversations` / `GET /conversations/{id}` / `DELETE …` | ses conversations, une conversation avec ses messages, suppression |
 | `/admin/users`, `/admin/collections`, `/admin/groups…` | administration, réservée aux admins (voir « Gouvernance ») |
 | `GET /documents/{id}` | état d'un document : `pending` → `processing` → `ready`, ou `failed` avec `error` |
 
@@ -95,6 +97,29 @@ bash deploy/compose.sh exec api python -m app.admin list-users   # aussi : set-p
 
 Changer un mot de passe ferme les sessions ouvertes ; désactiver un compte invalide tous ses
 jetons. Les documents gardent l'utilisateur qui les a envoyés (`uploaded_by`).
+
+## Questions
+
+`POST /ask` :
+
+1. conversation reprise (`conversation_id`) ou créée, question enregistrée ;
+2. **recherche hybride** parmi les chunks que l'appelant peut lire (RLS) : distance cosinus
+   sur les embeddings (HNSW, `hnsw.iterative_scan` pour ne pas perdre de résultats avec le
+   filtre des droits) et plein texte en français, fusionnés par Reciprocal Rank Fusion ;
+   6 passages retenus (`ASK_TOP_K`) ;
+3. prompt : consignes (répondre seulement d'après les extraits, citer `[n]`), extraits
+   numérotés, 6 derniers messages de la conversation, question ;
+4. réponse en **Server-Sent Events** : `meta` (conversation, modèle, citations), `token`
+   (morceaux de texte), `done` (id du message, tokens, durée) ou `error`. Enregistrée avec
+   ses citations à la fin du flux. `"stream": false` : une seule réponse JSON.
+
+Aucun passage accessible : réponse « aucun passage pertinent », sans appeler le modèle.
+Chacun ne voit que ses conversations, admins compris (RLS).
+
+```bash
+curl -N -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"question": "Quel est le ROI ?", "model": "gemma4:12b"}' https://<machine-hôte>/ask
+```
 
 ## Gouvernance
 

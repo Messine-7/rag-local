@@ -37,6 +37,14 @@ class Settings:
     job_max_attempts: int = 3
     # Phase 5 : connexion
     session_ttl_hours: int = 168  # durée d'un jeton de session (7 jours)
+    # Phase 5.3 : questions (POST /ask)
+    ask_top_k: int = 6  # passages envoyés au modèle
+    ask_candidates: int = 30  # chunks retenus par chaque recherche (sens, mots) avant fusion
+    ask_history_messages: int = 6  # derniers messages de la conversation envoyés au modèle
+    ask_max_tokens: int = 1024  # longueur maximale d'une réponse
+    ask_temperature: float = 0.1  # faible : réponses fidèles aux extraits
+    # Modèles à raisonnement (gemma4) : "none" = répondre directement ; vide = ne rien envoyer
+    ask_reasoning_effort: str = "none"
 
 
 def load_settings(env: Mapping[str, str]) -> Settings:
@@ -67,6 +75,12 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         job_timeout_s=int(env.get("JOB_TIMEOUT_S", "900")),
         job_max_attempts=int(env.get("JOB_MAX_ATTEMPTS", "3")),
         session_ttl_hours=int(env.get("SESSION_TTL_HOURS", "168")),
+        ask_top_k=int(env.get("ASK_TOP_K", "6")),
+        ask_candidates=int(env.get("ASK_CANDIDATES", "30")),
+        ask_history_messages=int(env.get("ASK_HISTORY_MESSAGES", "6")),
+        ask_max_tokens=int(env.get("ASK_MAX_TOKENS", "1024")),
+        ask_temperature=float(env.get("ASK_TEMPERATURE", "0.1")),
+        ask_reasoning_effort=env.get("ASK_REASONING_EFFORT", "none"),
     )
 
 

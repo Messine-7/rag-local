@@ -11,6 +11,7 @@ from app.auth import admin_user, current_user
 from app.config import get_settings
 from app.db import check_api_connection, migrate, set_api_password
 from app.routes_admin import router as admin_router
+from app.routes_ask import router as ask_router
 from app.routes_auth import router as auth_router
 from app.routes_documents import collections_router
 from app.routes_documents import router as documents_router
@@ -53,6 +54,7 @@ app.include_router(auth_router)  # /auth/login est public, les autres routes exi
 app.include_router(llm_router, dependencies=[Depends(current_user)])
 app.include_router(documents_router, dependencies=[Depends(current_user)])
 app.include_router(collections_router, dependencies=[Depends(current_user)])
+app.include_router(ask_router, dependencies=[Depends(current_user)])
 app.include_router(admin_router, dependencies=[Depends(admin_user)])
 
 
