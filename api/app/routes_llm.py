@@ -58,7 +58,13 @@ async def generate(req: GenerateRequest, llm: LLM, settings: Config) -> Generate
     start = time.perf_counter()
     try:
         result = await llm.generate(
-            req.prompt, model=model, max_tokens=req.max_tokens, temperature=req.temperature
+            req.prompt,
+            model=model,
+            max_tokens=req.max_tokens,
+            temperature=req.temperature,
+            # Même réglage que /ask : sans lui, gemma4 dépense max_tokens en raisonnement
+            # invisible, et le benchmark mesure des réponses vides
+            reasoning_effort=settings.ask_reasoning_effort or None,
         )
     except LLMError as exc:
         raise unavailable(exc) from exc

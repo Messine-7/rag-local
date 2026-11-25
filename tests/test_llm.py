@@ -23,8 +23,15 @@ class FakeLLM:
         self.fail = False
         self.calls: list[dict] = []
 
-    async def generate(self, prompt, *, model, max_tokens, temperature):
-        self.calls.append({"prompt": prompt, "model": model, "max_tokens": max_tokens})
+    async def generate(self, prompt, *, model, max_tokens, temperature, reasoning_effort):
+        self.calls.append(
+            {
+                "prompt": prompt,
+                "model": model,
+                "max_tokens": max_tokens,
+                "reasoning_effort": reasoning_effort,
+            }
+        )
         if self.fail:
             raise LLMError("connexion refusée")
         return Generation(text=f"réponse de {model}", prompt_tokens=4, completion_tokens=6)
@@ -58,6 +65,8 @@ def test_generate_uses_default_model(fake_llm):
     assert body["completion_tokens"] == 6
     assert body["latency_ms"] >= 0
     assert fake_llm.calls[0]["max_tokens"] == 256
+    # Pas de raisonnement préalable (sinon gemma4 renvoie des réponses vides)
+    assert fake_llm.calls[0]["reasoning_effort"] == "none"
 
 
 def test_generate_accepts_allowed_model(fake_llm):

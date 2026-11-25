@@ -329,16 +329,26 @@ Sous Windows PowerShell 5.1, pour un affichage correct des accents et un fichier
 `$env:PYTHONUTF8 = 1` avant la commande, et `| Out-File -Encoding utf8 bench.md` plutôt que
 `Tee-Object` (qui écrit en UTF-16).
 
-Résultats sur RTX 3090 (24 Go), Ollama, `OLLAMA_NUM_PARALLEL=4`, réponses de 256 tokens —
-détail et analyse dans [docs/benchmarks/2026-11-18-ollama.md](docs/benchmarks/2026-11-18-ollama.md) :
+Directement contre Ollama, sans l'API, en streaming : mesure aussi le temps avant le premier
+mot et sépare réponse et raisonnement (modèles à raisonnement comme gemma4) :
 
-| Modèle | Concurrence | Latence p50 (s) | Débit par requête (tok/s) | Débit total (tok/s) |
-|---|---|---|---|---|
-| mistral-small3.2:24b | 1 / 4 / 8 | 5.1 / 8.6 / 16.1 | 50 / 30 / 20 | 50 / 118 / 127 |
-| gemma4:12b | 1 / 4 / 8 | 2.0 / 3.2 / 6.5 | 129 / 81 / 49 | 129 / 317 / 310 |
+```bash
+uv run scripts/bench_ollama.py --url https://<machine-hôte>:11434/v1 --model mistral-small3.2:24b --model gemma4:12b
+```
 
-Chargement d'un modèle en VRAM : 31 s (Mistral), 14 s (Gemma). Au-delà de 4 requêtes
-simultanées, le débit plafonne (`NUM_PARALLEL`) et les suivantes attendent leur tour.
+Résultats sur RTX 3090 (24 Go), Ollama, `OLLAMA_NUM_PARALLEL=4`, réponses de 256 tokens,
+`reasoning_effort: "none"` — détail et analyse dans
+[docs/benchmarks/2026-11-25-ollama.md](docs/benchmarks/2026-11-25-ollama.md) :
+
+| Modèle | Concurrence | Latence p50 (s) | 1er mot p50 (s) | Débit par requête (tok/s) | Débit total (tok/s) |
+|---|---|---|---|---|---|
+| mistral-small3.2:24b | 1 / 4 / 8 | 5.1 / 8.5 / 15.9 | 0.08 / 0.26 / 8.0 | 50 / 30 / 20 | 50 / 120 / 128 |
+| gemma4:12b | 1 / 4 / 8 | 2.5 / 3.8 / 7.9 | 0.12 / 0.27 / 4.2 | 100 / 66 / 39 | 100 / 261 / 247 |
+
+Sans `reasoning_effort: "none"`, gemma4 n'écrit aucun mot : ses 256 tokens partent en
+raisonnement invisible (c'est ce qu'a mesuré, à tort, le benchmark du 2026-11-18). Au-delà de
+4 requêtes simultanées, le débit plafonne (`NUM_PARALLEL`) et les suivantes attendent leur
+tour sans rien recevoir : 4 à 8 s avant le premier mot.
 
 ## Structure
 

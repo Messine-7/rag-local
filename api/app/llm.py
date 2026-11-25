@@ -43,14 +43,23 @@ class LLMClient:
         )
 
     async def generate(
-        self, prompt: str, *, model: str, max_tokens: int, temperature: float
+        self,
+        prompt: str,
+        *,
+        model: str,
+        max_tokens: int,
+        temperature: float,
+        reasoning_effort: str | None = None,
     ) -> Generation:
+        """reasoning_effort : voir stream_chat."""
+        extra = {"reasoning_effort": reasoning_effort} if reasoning_effort else {}
         try:
             response = await self._client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=max_tokens,
                 temperature=temperature,
+                **extra,  # type: ignore[arg-type]
             )
         except OpenAIError as exc:
             raise LLMError(str(exc)) from exc
