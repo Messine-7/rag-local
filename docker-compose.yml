@@ -22,6 +22,11 @@ services:
       <<: *app-env
       MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-100}
       SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-168}
+      # Requêtes servies avec le rôle rag_api, soumis à la Row-Level Security (phase 5.2) ;
+      # DATABASE_URL (propriétaire) ne sert qu'au démarrage : migrations, mot de passe de rag_api.
+      # Lettres et chiffres seulement : repris tel quel dans l'URL.
+      API_DB_PASSWORD: ${API_DB_PASSWORD:-ragapidev}
+      API_DATABASE_URL: postgresql://rag_api:${API_DB_PASSWORD:-ragapidev}@db:5432/rag
     volumes:
       - uploads:/data/uploads # PDF reçus, lus ensuite par le worker
     depends_on:

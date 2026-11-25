@@ -61,8 +61,10 @@ sur le CPU (lent, plutôt pour de petits modèles).
 | `GET /auth/api-keys` / `DELETE /auth/api-keys/{id}` | liste ou révoque ses clés API |
 | `POST /llm/generate` | génère une réponse à un prompt (`prompt`, `model`, `max_tokens`) — phase 3, remplacé par `/ask` en phase 5 |
 | `POST /llm/embed` | embeddings d'une liste de textes (`texts`) — phase 3 |
-| `POST /documents` | envoie un PDF à indexer (multipart, champ `file`) ; 202 : mis dans la file, 200 : déjà indexé |
-| `GET /documents` | liste des documents et état de leur ingestion |
+| `POST /documents` | envoie un PDF à indexer (multipart, champs `file` et `collection`, `défaut` sinon) ; 202 : mis dans la file, 200 : déjà indexé ; droit d'écriture requis |
+| `GET /documents` | documents des collections accessibles, et état de leur ingestion |
+| `GET /collections` | collections accessibles, avec son droit (`read` ou `write`) |
+| `/admin/users`, `/admin/collections`, `/admin/groups…` | administration, réservée aux admins (voir « Gouvernance ») |
 | `GET /documents/{id}` | état d'un document : `pending` → `processing` → `ready`, ou `failed` avec `error` |
 
 Documentation interactive : `/docs` (bouton « Authorize » pour y coller un jeton).
@@ -93,6 +95,40 @@ bash deploy/compose.sh exec api python -m app.admin list-users   # aussi : set-p
 
 Changer un mot de passe ferme les sessions ouvertes ; désactiver un compte invalide tous ses
 jetons. Les documents gardent l'utilisateur qui les a envoyés (`uploaded_by`).
+
+## Gouvernance
+
+Les documents sont rangés en **collections**. Les utilisateurs sont réunis en **groupes**, et
+chaque groupe a un droit sur des collections : `read` (lister, interroger) ou `write` (en plus,
+envoyer des PDF). Un admin a tous les droits ; un utilisateur sans groupe ne voit rien.
+
+Ces droits sont appliqués **par Postgres** (Row-Level Security, migration
+[004_governance.sql](api/app/migrations/004_governance.sql)), pas seulement par le code :
+
+- l'API sert les requêtes avec le rôle `rag_api`, ni super-utilisateur ni `BYPASSRLS` (elle
+  refuse de démarrer sinon) ; le propriétaire `rag` ne sert qu'aux migrations, au worker et
+  à `app.admin` ;
+- chaque requête tourne dans une transaction où l'API place l'**empreinte du jeton** reçu
+  (`app.token_hash`) ; Postgres en déduit l'utilisateur et ses collections. `rag_api` ne peut
+  pas lire les empreintes des jetons : une injection SQL ne peut pas se faire passer pour un
+  autre utilisateur ;
+- documents, chunks et collections sont filtrés ; groupes, droits et comptes ne sont
+  modifiables que par un admin, même en SQL direct.
+
+Administration (admin, depuis `/docs` ou en HTTP) :
+
+```bash
+POST   /admin/collections                      {"name": "rh"}
+POST   /admin/groups                           {"name": "équipe-rh"}
+PUT    /admin/groups/{id}/members/{user_id}
+PUT    /admin/groups/{id}/collections/{coll}   {"permission": "read"}   # ou "write"
+DELETE /admin/groups/{id}/members/{user_id}    # et …/collections/{coll}
+POST   /admin/users                            {"username": "bob", "password": "…"}
+PATCH  /admin/users/{id}                       {"is_admin": true} / {"disabled": true}
+```
+
+`API_DB_PASSWORD` (`.env`, obligatoire sur la machine hôte) : mot de passe de `rag_api`,
+reposé à chaque démarrage de l'API.
 
 ## Consulter la base (DBeaver)
 

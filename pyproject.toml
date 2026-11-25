@@ -4,7 +4,7 @@ version = "0.1.0"
 requires-python = ">=3.12"
 # Dépendances de l'API : seules celles-ci sont installées dans l'image Docker (uv sync --no-dev).
 dependencies = [
-    "fastapi>=0.115",
+    "fastapi>=0.121", # Depends(scope="function") : transaction validée avant la réponse
     "uvicorn[standard]>=0.30",
     "openai>=2.0,<3",
     "psycopg[binary]>=3.2", # PostgreSQL (async), pilote avec ses bibliothèques C incluses

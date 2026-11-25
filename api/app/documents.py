@@ -13,6 +13,10 @@ class UnknownCollection(Exception):
     pass
 
 
+class CollectionForbidden(Exception):
+    """Collection visible (droit de lecture) mais pas de droit d'écriture."""
+
+
 @dataclass(frozen=True)
 class Document:
     id: int
@@ -49,6 +53,40 @@ async def list_documents(conn: psycopg.AsyncConnection) -> list[Document]:
     async with conn.cursor(row_factory=class_row(Document)) as cur:
         await cur.execute(_SELECT + " ORDER BY d.id DESC")
         return await cur.fetchall()
+
+
+@dataclass(frozen=True)
+class Collection:
+    id: int
+    name: str
+    permission: str  # droit de l'appelant : read ou write
+
+
+async def list_collections(conn: psycopg.AsyncConnection) -> list[Collection]:
+    """Collections que l'appelant peut lire (filtrées par la RLS), avec son droit sur chacune."""
+    async with conn.cursor(row_factory=class_row(Collection)) as cur:
+        await cur.execute(
+            "SELECT c.id, c.name,"
+            " CASE WHEN c.id = ANY ((SELECT rag_collections('write'))::bigint[])"
+            " THEN 'write' ELSE 'read' END AS permission"
+            " FROM collections c ORDER BY c.name"
+        )
+        return await cur.fetchall()
+
+
+async def check_can_write(conn: psycopg.AsyncConnection, collection: str) -> None:
+    """Avant d'écrire le fichier sur le disque : l'appelant peut-il envoyer dans cette
+    collection ? (La RLS le vérifie de toute façon à l'insertion.)"""
+    cur = await conn.execute(
+        "SELECT id = ANY ((SELECT rag_collections('write'))::bigint[])"
+        " FROM collections WHERE name = %s",
+        (collection,),
+    )
+    row = await cur.fetchone()
+    if row is None:  # inexistante, ou invisible pour l'appelant : même réponse
+        raise UnknownCollection(collection)
+    if not row[0]:
+        raise CollectionForbidden(collection)
 
 
 async def create_document(

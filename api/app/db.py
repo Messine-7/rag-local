@@ -10,6 +10,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 import psycopg
+from psycopg import sql
 
 log = logging.getLogger(__name__)
 
@@ -42,6 +43,36 @@ async def migrate(conn: psycopg.AsyncConnection) -> list[str]:
     if applied:
         log.info("migrations appliquées : %s", ", ".join(applied))
     return applied
+
+
+async def set_api_password(conn: psycopg.AsyncConnection, password: str) -> None:
+    """Ouvre la connexion du rôle rag_api (migration 004) avec le mot de passe de .env.
+
+    Exécuté par le propriétaire à chaque démarrage de l'API : changer API_DB_PASSWORD dans
+    .env puis redémarrer suffit."""
+    await conn.execute(
+        sql.SQL("ALTER ROLE rag_api WITH LOGIN PASSWORD {}").format(sql.Literal(password))
+    )
+
+
+async def check_api_connection(conn: psycopg.AsyncConnection) -> None:
+    """Refuse de démarrer si l'API n'est pas soumise à la Row-Level Security, ou si la base
+    n'est pas à jour (migration manquante)."""
+    cur = await conn.execute(
+        "SELECT current_user, rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = current_user"
+    )
+    row = await cur.fetchone()
+    assert row is not None
+    if row[1]:
+        raise RuntimeError(
+            f"l'API est connectée en tant que {row[0]}, qui contourne la Row-Level Security :"
+            " API_DATABASE_URL doit utiliser le rôle rag_api"
+        )
+    cur = await conn.execute("SELECT version FROM schema_migrations")
+    done = {r[0] for r in await cur.fetchall()}
+    missing = [p.name for p in sorted(MIGRATIONS_DIR.glob("*.sql")) if p.name not in done]
+    if missing:
+        raise RuntimeError(f"migrations non appliquées : {', '.join(missing)}")
 
 
 def to_vector(values: Sequence[float]) -> str:

@@ -18,7 +18,12 @@ class Settings:
     embed_model: str
     llm_timeout_s: float
     # Phase 4 : base de données et ingestion
+    # Propriétaire de la base (rôle rag) : migrations, worker, app.admin. Dans l'API, sert
+    # seulement au démarrage (migrations, mot de passe de rag_api).
     database_url: str = ""
+    # Phase 5.2 : l'API sert les requêtes avec le rôle rag_api, soumis à la Row-Level Security
+    api_database_url: str = ""
+    api_db_password: str = ""
     upload_dir: str = "/data/uploads"  # volume partagé entre l'API et le worker
     max_upload_mb: int = 100
     chunk_size: int = 1500  # caractères (environ 350 à 400 tokens)
@@ -51,6 +56,8 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         embed_model=env.get("EMBED_MODEL", "bge-m3"),
         llm_timeout_s=float(env.get("LLM_TIMEOUT_S", "300")),
         database_url=env.get("DATABASE_URL", ""),
+        api_database_url=env.get("API_DATABASE_URL", ""),
+        api_db_password=env.get("API_DB_PASSWORD", ""),
         upload_dir=env.get("UPLOAD_DIR", "/data/uploads"),
         max_upload_mb=int(env.get("MAX_UPLOAD_MB", "100")),
         chunk_size=int(env.get("CHUNK_SIZE", "1500")),

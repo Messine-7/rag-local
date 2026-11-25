@@ -8,6 +8,8 @@
 
 import hashlib
 import secrets
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Annotated
@@ -18,6 +20,7 @@ from argon2.exceptions import InvalidHashError, VerificationError
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from psycopg.rows import class_row
+from psycopg_pool import AsyncConnectionPool
 
 SESSION_PREFIX = "rag_s_"
 API_KEY_PREFIX = "rag_k_"
@@ -101,10 +104,8 @@ async def authenticate(conn: psycopg.AsyncConnection, username: str, password: s
         return None
     if row is None or row[3] is None:
         return None
-    if _hasher.check_needs_rehash(stored):  # paramètres argon2 renforcés depuis : on met à jour
-        await conn.execute(
-            "UPDATE users SET password_hash = %s WHERE id = %s", (_hasher.hash(password), row[0])
-        )
+    # Pas de mise à jour du hachage ici : l'API (rôle rag_api) ne peut pas modifier un compte
+    # sans être admin (RLS). Nouveaux paramètres argon2 : au prochain changement de mot de passe.
     return User(id=row[0], username=row[1], is_admin=row[2])
 
 
@@ -129,16 +130,12 @@ async def issue_token(
 
 
 async def user_for_token(conn: psycopg.AsyncConnection, token: str) -> tuple[User, int] | None:
-    """Utilisateur et id du jeton, si le jeton est valable (ni expiré, ni révoqué, compte actif)."""
+    """Utilisateur et id du jeton, si le jeton est valable (ni expiré, ni révoqué, compte actif).
+
+    Passe par la fonction rag_token_user (migration 004) : l'API ne peut pas lire les
+    empreintes des jetons elle-même."""
     cur = await conn.execute(
-        """
-        UPDATE tokens t SET last_used_at = now()
-        FROM users u
-        WHERE t.token_hash = %s AND u.id = t.user_id
-          AND t.revoked_at IS NULL AND (t.expires_at IS NULL OR t.expires_at > now())
-          AND u.disabled_at IS NULL
-        RETURNING u.id, u.username, u.is_admin, t.id
-        """,
+        "SELECT user_id, username, is_admin, token_id FROM rag_token_user(%s)",
         (_token_hash(token),),
     )
     row = await cur.fetchone()
@@ -173,10 +170,11 @@ _bearer = HTTPBearer(auto_error=False)
 
 @dataclass(frozen=True)
 class Caller:
-    """Qui appelle l'API, et avec quel jeton (pour la déconnexion)."""
+    """Qui appelle l'API, et avec quel jeton (déconnexion, droits dans Postgres)."""
 
     user: User
     token_id: int
+    token_hash: str
 
 
 def _unauthorized(detail: str) -> HTTPException:
@@ -195,11 +193,32 @@ async def current_caller(
     if found is None:
         raise _unauthorized("jeton invalide, expiré ou révoqué")
     user, token_id = found
-    return Caller(user=user, token_id=token_id)
+    return Caller(user=user, token_id=token_id, token_hash=_token_hash(credentials.credentials))
 
 
 async def current_user(caller: Annotated[Caller, Depends(current_caller)]) -> User:
     return caller.user
+
+
+@asynccontextmanager
+async def caller_connection(
+    pool: AsyncConnectionPool, token_hash: str
+) -> AsyncIterator[psycopg.AsyncConnection]:
+    """Connexion dans une transaction où Postgres sait qui appelle (Row-Level Security).
+
+    L'empreinte du jeton est placée dans app.token_hash, pour cette transaction seulement
+    (set_config(…, true)) : la connexion rendue au pool ne garde rien."""
+    async with pool.connection() as conn, conn.transaction():
+        await conn.execute("SELECT set_config('app.token_hash', %s, true)", (token_hash,))
+        yield conn
+
+
+async def caller_db(
+    request: Request, caller: Annotated[Caller, Depends(current_caller)]
+) -> AsyncIterator[psycopg.AsyncConnection]:
+    """Dépendance FastAPI : connexion soumise aux droits de l'appelant, pour toute la requête."""
+    async with caller_connection(request.app.state.pool, caller.token_hash) as conn:
+        yield conn
 
 
 async def admin_user(user: Annotated[User, Depends(current_user)]) -> User:
@@ -210,3 +229,7 @@ async def admin_user(user: Annotated[User, Depends(current_user)]) -> User:
 
 CurrentUser = Annotated[User, Depends(current_user)]
 CurrentCaller = Annotated[Caller, Depends(current_caller)]
+AdminUser = Annotated[User, Depends(admin_user)]
+# scope="function" : transaction validée AVANT l'envoi de la réponse (sinon un client qui
+# enchaîne deux requêtes pourrait ne pas voir ce qu'il vient d'écrire)
+CallerDB = Annotated[psycopg.AsyncConnection, Depends(caller_db, scope="function")]

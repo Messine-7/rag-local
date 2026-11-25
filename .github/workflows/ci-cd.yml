@@ -78,7 +78,10 @@ jobs:
         # et le worker doit être encore en marche 10 s après son démarrage.
         run: |
           docker run -d --name smoke --network ci -p 127.0.0.1:8000:8000 \
-            -e DATABASE_URL=postgresql://rag:test@db:5432/rag_test "$IMAGE:$GITHUB_SHA"
+            -e DATABASE_URL=postgresql://rag:test@db:5432/rag_test \
+            -e API_DB_PASSWORD=testapi \
+            -e API_DATABASE_URL=postgresql://rag_api:testapi@db:5432/rag_test \
+            "$IMAGE:$GITHUB_SHA"
           docker run -d --name smoke-worker --network ci \
             -e DATABASE_URL=postgresql://rag:test@db:5432/rag_test "$IMAGE:$GITHUB_SHA" python -m app.worker
           ok=0
