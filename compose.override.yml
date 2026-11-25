@@ -1,0 +1,17 @@
+# Poste de dev seulement. « docker compose » lit ce fichier automatiquement ; le PC fixe ne
+# le lit jamais, car deploy/compose.sh nomme ses fichiers avec -f (docker-compose.yml +
+# deploy/compose.prod.yml).
+services:
+  db:
+    ports:
+      # Pour pytest et un client SQL (DBeaver, pgAdmin…), localhost seulement. 5433 et non 5432 :
+      # un PostgreSQL installé sous Windows occupe souvent 5432 et intercepte les connexions.
+      - "127.0.0.1:5433:5432"
+    volumes:
+      # Crée la base rag_test à côté de rag, au premier démarrage du volume pgdata seulement
+      - ./dev/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql:ro
+
+  # Pas d'Ollama local : l'API et le worker utilisent celui du PC fixe (LLM_BASE_URL dans
+  # .env). Pour le démarrer quand même : docker compose --profile ollama-local up -d
+  ollama:
+    profiles: ["ollama-local"]

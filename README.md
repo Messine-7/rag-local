@@ -6,7 +6,7 @@ Assistant de questions-réponses sur des documents PDF et une base PostgreSQL, e
 auto-hébergé : modèles, base vectorielle et API tournent sur une machine personnelle,
 interrogée à distance via un réseau privé.
 
-> Projet en construction, phase par phase. Phase actuelle : ingestion des PDF (Postgres + pgvector).
+> Projet en construction, phase par phase. Phase actuelle : ingestion des PDF (Postgres + pgvector, worker).
 > Phase précédente : serveurs de modèles (Ollama sur GPU), terminée — voir [Mesurer](#mesurer).
 
 ## Architecture
@@ -18,6 +18,9 @@ flowchart LR
   L -- "Tailscale (HTTPS)" --> A
   subgraph P["PC fixe — Docker Compose dans WSL"]
     A["API FastAPI"] --> O["Ollama (GPU)<br/>LLM + embeddings"]
+    A -- "PDF + job" --> D[("Postgres + pgvector<br/>documents, chunks, jobs")]
+    W["Worker d'ingestion<br/>(même image)"] -- "SKIP LOCKED" --> D
+    W --> O
   end
 ```
 
@@ -25,6 +28,8 @@ flowchart LR
 |---|---|---|
 | API | FastAPI (async) | plusieurs questions servies en parallèle |
 | Réseau | Tailscale + `tailscale serve` | aucun port ouvert sur la box, HTTPS automatique |
+| Base | Postgres 17 + pgvector (HNSW) | vecteurs, plein texte et file de jobs dans un seul service à opérer et sauvegarder |
+| Ingestion | worker séparé, PyMuPDF | les PDF sont traités hors de l'API : l'indexation ne ralentit pas les questions |
 | Modèles | Ollama sur GPU : `mistral-small3.2:24b`, `gemma4:12b`, `bge-m3` (embeddings) | l'API passe par l'interface compatible OpenAI : changer de serveur (vLLM) ou de fournisseur ne demande que des variables d'environnement |
 | CI | GitHub Actions | lint (ruff), puis une seule image construite, testée (pytest, démarrage) et publiée |
 | CD | déploiement « pull » | le repo est public : aucun code venu de GitHub ne s'exécute sur la machine hôte, elle récupère seulement l'image validée par la CI, et revient seule à la version précédente si la nouvelle ne démarre pas |
@@ -36,12 +41,13 @@ Prérequis : Docker.
 ```bash
 git clone https://github.com/messine-7/rag-local.git
 cd rag-local
-docker compose up -d --build --wait api
+docker compose up -d --build --wait api worker
 curl http://localhost:8000/health
 ```
 
-Seule l'API démarre. `docker compose up -d ollama` ajoute le serveur de modèles ; sans GPU,
-il tourne sur le CPU (lent, plutôt pour de petits modèles).
+L'API, le worker et Postgres démarrent. `docker compose up -d ollama` ajoute le serveur de
+modèles (nécessaire au worker pour les embeddings, `bge-m3` à télécharger) ; sans GPU, il tourne
+sur le CPU (lent, plutôt pour de petits modèles).
 
 ## API
 
@@ -50,8 +56,38 @@ il tourne sur le CPU (lent, plutôt pour de petits modèles).
 | `GET /health` | état et commit déployé (`version`) |
 | `POST /llm/generate` | génère une réponse à un prompt (`prompt`, `model`, `max_tokens`) — phase 3, remplacé par `/ask` en phase 5 |
 | `POST /llm/embed` | embeddings d'une liste de textes (`texts`) — phase 3 |
+| `POST /documents` | envoie un PDF à indexer (multipart, champ `file`) ; 202 : mis dans la file, 200 : déjà indexé |
+| `GET /documents` | liste des documents et état de leur ingestion |
+| `GET /documents/{id}` | état d'un document : `pending` → `processing` → `ready`, ou `failed` avec `error` |
 
 Documentation interactive : `/docs`.
+
+```bash
+curl -F "file=@rapport.pdf" https://<machine-hôte>/documents
+curl https://<machine-hôte>/documents/1
+```
+
+## Ingestion des PDF
+
+1. `POST /documents` range le PDF dans le volume `uploads` sous son empreinte SHA-256 (le même
+   fichier n'est jamais indexé deux fois), crée le document et un job dans la table `jobs`.
+2. Le worker (`python -m app.worker`, même image que l'API) prend le plus ancien job avec
+   `SELECT … FOR UPDATE SKIP LOCKED` : plusieurs workers peuvent tourner sans se marcher dessus.
+   File vide : il regarde de nouveau toutes les 3 s.
+3. Texte extrait page par page (PyMuPDF), découpé en chunks d'environ 1 500 caractères avec
+   200 de chevauchement, sans franchir de page (pour citer la page), puis vectorisé par lots
+   avec `bge-m3`.
+4. Chunks insérés en une seule transaction, avec le nom du modèle d'embeddings ; le document
+   passe à `ready`.
+
+En cas d'échec : PDF illisible ou sans texte (scanné : pas d'OCR) → `failed` tout de suite ;
+erreur temporaire (Ollama indisponible) → nouvel essai après 1 puis 2 minutes, `failed` au
+3ᵉ échec. Renvoyer un PDF en échec le remet dans la file. Un job resté `running` plus de
+15 minutes (worker arrêté net) est remis dans la file.
+
+Schéma : [api/app/migrations/](api/app/migrations/), fichiers SQL appliqués dans l'ordre au
+démarrage de l'API et du worker (table `schema_migrations`). Une migration appliquée ne se
+modifie plus : tout changement passe par un nouveau fichier.
 
 ## Développer
 
@@ -85,6 +121,30 @@ et y installe exactement les versions de `uv.lock` : dépendances de l'API, plus
 uv run ruff check .
 uv run ruff format --check .
 uv run pytest
+```
+
+Les tests de l'ingestion ont besoin de Postgres + pgvector ; sans `TEST_DATABASE_URL`, ils
+sont ignorés (la CI lance son propre Postgres). En local, ils utilisent la base `rag_test` du
+Postgres de dev : `compose.override.yml` (lu par `docker compose` sur le poste de dev, jamais
+par le PC fixe) publie le port sur `127.0.0.1:5433` et crée `rag_test` au premier démarrage.
+Ajouter dans `.env` (même mot de passe que `POSTGRES_PASSWORD`) :
+
+```bash
+TEST_DATABASE_URL=postgresql://rag:<POSTGRES_PASSWORD>@127.0.0.1:5433/rag_test
+```
+
+puis `docker compose up -d db` et `uv run pytest`. Les tests vident la base : ils refusent
+de tourner si son nom ne finit pas par `_test`. Volume `pgdata` créé avant
+`compose.override.yml` : `docker compose exec db createdb -U rag rag_test`.
+
+Les tests n'appellent jamais Ollama (modèles remplacés par des faux). Pour essayer la stack
+sur le laptop, l'API et le worker utilisent l'Ollama du PC fixe (GPU) : `compose.override.yml`
+ne démarre pas d'Ollama local, et `.env` contient
+`LLM_BASE_URL=https://pc-fixe.<tailnet>.ts.net:11434/v1`. Sur le PC fixe, une seule fois,
+après un déploiement qui publie `127.0.0.1:11434` (`deploy/compose.prod.yml`) :
+
+```powershell
+tailscale serve --bg --https=11434 http://127.0.0.1:11434
 ```
 
 ### Ajouter ou mettre à jour une dépendance
@@ -123,9 +183,10 @@ docker build -f api/Dockerfile -t rag-local-api .
 ## Déploiement
 
 1. Chaque push sur `main` lance la CI sur les runners GitHub : lint, build de l'image une
-   seule fois, tests pytest dans un conteneur créé à partir de cette image, puis test de
-   démarrage (`/health` doit répondre).
-2. Si tout passe, cette même image est publiée sur `ghcr.io/messine-7/rag-local-api`, taguée avec le commit.
+   seule fois, tests pytest dans un conteneur créé à partir de cette image (avec un Postgres +
+   pgvector jetable), puis test de démarrage (`/health` doit répondre, le worker doit tenir).
+2. Si tout passe, cette même image est publiée sur `ghcr.io/messine-7/rag-local-api`, taguée
+   avec le commit. L'API et le worker tournent tous deux avec cette image.
 3. Sur la machine hôte (Windows + Docker dans WSL), un timer systemd lance `deploy/pull-deploy.sh`
    toutes les 2 minutes. Dès que l'image du dernier commit existe, le script met à jour le clone
    et relance les conteneurs ; sinon il ne touche à rien.
@@ -146,7 +207,8 @@ bash deploy/compose.sh exec ollama ollama ps    # après une requête : « 100% 
 ```
 
 Réglages (modèles, requêtes en parallèle, taille du contexte) : copier `.env.example` en `.env`,
-l'ajuster, puis `bash deploy/compose.sh up -d ollama api`.
+l'ajuster, puis `bash deploy/compose.sh up -d ollama api worker`. Fixer `POSTGRES_PASSWORD`
+avant le premier démarrage de la base : il est écrit dans le volume à sa création.
 
 ## Mesurer
 
@@ -176,8 +238,7 @@ simultanées, le débit plafonne (`NUM_PARALLEL`) et les suivantes attendent leu
 
 | Dossier | Rôle |
 |---|---|
-| `api/` | API FastAPI |
-| `worker/` | ingestion PDF (à venir) |
+| `api/` | code Python de l'image : API FastAPI, worker d'ingestion (`app/worker.py`), migrations SQL |
 | `client/` | client en ligne de commande (à venir) |
 | `tests/` | tests pytest |
 | `deploy/` | déploiement pull sur la machine hôte (`install-timer.sh` l'installe, `compose.sh` pour l'exploitation) |

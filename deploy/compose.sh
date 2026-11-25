@@ -4,7 +4,9 @@
 #   bash deploy/compose.sh ps
 #   bash deploy/compose.sh logs -f ollama
 #   bash deploy/compose.sh exec ollama ollama pull bge-m3
-#   bash deploy/compose.sh up -d ollama api      (après avoir modifié .env)
+#   bash deploy/compose.sh logs -f worker
+#   bash deploy/compose.sh exec db psql -U rag rag
+#   bash deploy/compose.sh up -d ollama api worker      (après avoir modifié .env)
 set -euo pipefail
 
 deploy_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

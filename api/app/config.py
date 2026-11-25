@@ -1,4 +1,4 @@
-"""Configuration de l'API, lue dans les variables d'environnement.
+"""Configuration de l'API et du worker, lue dans les variables d'environnement.
 
 Changer de modèle ou de serveur de modèles ne demande que de changer ces variables.
 """
@@ -17,6 +17,19 @@ class Settings:
     llm_allowed_models: tuple[str, ...]
     embed_model: str
     llm_timeout_s: float
+    # Phase 4 : base de données et ingestion
+    database_url: str = ""
+    upload_dir: str = "/data/uploads"  # volume partagé entre l'API et le worker
+    max_upload_mb: int = 100
+    chunk_size: int = 1500  # caractères (environ 350 à 400 tokens)
+    chunk_overlap: int = 200  # caractères repris du chunk précédent
+    embed_batch_size: int = 16  # textes envoyés ensemble au modèle d'embeddings
+    # Taille des vecteurs : doit correspondre à la colonne chunks.embedding (bge-m3 : 1024).
+    # Changer de modèle d'embeddings demande une migration et une réindexation complète.
+    embed_dimensions: int = 1024
+    worker_poll_s: float = 3.0  # attente entre deux regards dans la file quand elle est vide
+    job_timeout_s: int = 900  # au-delà, un job « running » est considéré comme abandonné
+    job_max_attempts: int = 3
 
 
 def load_settings(env: Mapping[str, str]) -> Settings:
@@ -35,6 +48,15 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         llm_allowed_models=tuple(allowed),
         embed_model=env.get("EMBED_MODEL", "bge-m3"),
         llm_timeout_s=float(env.get("LLM_TIMEOUT_S", "300")),
+        database_url=env.get("DATABASE_URL", ""),
+        upload_dir=env.get("UPLOAD_DIR", "/data/uploads"),
+        max_upload_mb=int(env.get("MAX_UPLOAD_MB", "100")),
+        chunk_size=int(env.get("CHUNK_SIZE", "1500")),
+        chunk_overlap=int(env.get("CHUNK_OVERLAP", "200")),
+        embed_batch_size=int(env.get("EMBED_BATCH_SIZE", "16")),
+        worker_poll_s=float(env.get("WORKER_POLL_S", "3")),
+        job_timeout_s=int(env.get("JOB_TIMEOUT_S", "900")),
+        job_max_attempts=int(env.get("JOB_MAX_ATTEMPTS", "3")),
     )
 
 

@@ -49,25 +49,49 @@ jobs:
             -f api/Dockerfile \
             -t "$IMAGE:$GITHUB_SHA" .
 
+      - name: Base de test (Postgres + pgvector)
+        # Même image que sur le PC fixe, sur un réseau Docker partagé avec les conteneurs de test
+        run: |
+          docker network create ci
+          docker run -d --name db --network ci \
+            -e POSTGRES_USER=rag -e POSTGRES_PASSWORD=test -e POSTGRES_DB=rag_test \
+            pgvector/pgvector:0.8.1-pg17
+          for i in $(seq 1 30); do
+            if docker exec db pg_isready -U rag -d rag_test; then exit 0; fi
+            sleep 1
+          done
+          exit 1
+
       - name: Tests dans l'image
         # Conteneur jetable créé à partir de l'image : le groupe « test » de uv.lock y est
         # ajouté (pytest, httpx), l'image elle-même ne change pas.
         run: |
-          docker run --rm \
+          docker run --rm --network ci \
             -v "$PWD/tests:/app/tests:ro" \
             -e PYTHONDONTWRITEBYTECODE=1 \
+            -e TEST_DATABASE_URL=postgresql://rag:test@db:5432/rag_test \
             "$IMAGE:$GITHUB_SHA" \
-            uv run --frozen --no-default-groups --group test python -m pytest -p no:cacheprovider tests
+            uv run --frozen --no-default-groups --group test python -m pytest -p no:cacheprovider -rs tests
 
-      - name: Test de démarrage
-        # L'image est lancée comme en production ; /health doit répondre en moins de 30 s.
+      - name: Test de démarrage (API et worker)
+        # L'image est lancée comme en production : /health doit répondre en moins de 30 s,
+        # et le worker doit être encore en marche 10 s après son démarrage.
         run: |
-          docker run -d --name smoke -p 127.0.0.1:8000:8000 "$IMAGE:$GITHUB_SHA"
+          docker run -d --name smoke --network ci -p 127.0.0.1:8000:8000 \
+            -e DATABASE_URL=postgresql://rag:test@db:5432/rag_test "$IMAGE:$GITHUB_SHA"
+          docker run -d --name smoke-worker --network ci \
+            -e DATABASE_URL=postgresql://rag:test@db:5432/rag_test "$IMAGE:$GITHUB_SHA" python -m app.worker
+          ok=0
           for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:8000/health; then exit 0; fi
+            if curl -fsS http://127.0.0.1:8000/health; then ok=1; break; fi
             sleep 1
           done
+          sleep 10
+          if [ "$ok" = 1 ] && [ "$(docker inspect -f '{{.State.Running}}' smoke-worker)" = true ]; then
+            exit 0
+          fi
           docker logs smoke
+          docker logs smoke-worker
           exit 1
 
       - name: Publication sur ghcr.io (tags = commit et main)

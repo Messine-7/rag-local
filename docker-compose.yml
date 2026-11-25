@@ -1,5 +1,16 @@
 name: rag-local
 
+# Réglages communs à l'API et au worker (même image, même code)
+x-app-env: &app-env
+  APP_VERSION: ${APP_VERSION:-dev}
+  # Ollama du projet par défaut ; sur le laptop, .env pointe vers celui du PC fixe (README)
+  LLM_BASE_URL: ${LLM_BASE_URL:-http://ollama:11434/v1}
+  LLM_MODEL: ${LLM_MODEL:-mistral-small3.2:24b}
+  LLM_ALLOWED_MODELS: ${LLM_ALLOWED_MODELS:-mistral-small3.2:24b,gemma4:12b}
+  EMBED_MODEL: ${EMBED_MODEL:-bge-m3}
+  DATABASE_URL: postgresql://rag:${POSTGRES_PASSWORD:-rag-local-dev}@db:5432/rag
+  UPLOAD_DIR: /data/uploads
+
 services:
   api:
     build:
@@ -8,11 +19,13 @@ services:
     ports:
       - "127.0.0.1:8000:8000" # seul port publié, et seulement sur localhost (relayé par tailscale serve)
     environment:
-      APP_VERSION: ${APP_VERSION:-dev}
-      LLM_BASE_URL: http://ollama:11434/v1
-      LLM_MODEL: ${LLM_MODEL:-mistral-small3.2:24b}
-      LLM_ALLOWED_MODELS: ${LLM_ALLOWED_MODELS:-mistral-small3.2:24b,gemma4:12b}
-      EMBED_MODEL: ${EMBED_MODEL:-bge-m3}
+      <<: *app-env
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-100}
+    volumes:
+      - uploads:/data/uploads # PDF reçus, lus ensuite par le worker
+    depends_on:
+      db:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
@@ -21,9 +34,45 @@ services:
       retries: 10
       start_period: 5s
 
-  # Serveur de modèles (génération + embeddings). Aucun port publié : seule l'API le joint,
-  # par son nom de service. Sans GPU (laptop), il tourne sur le CPU ; le GPU est ajouté sur
-  # le PC fixe par deploy/compose.prod.yml.
+  # Ingestion des PDF : même image que l'API, autre commande. Lit la file de jobs dans Postgres.
+  worker:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    command: ["python", "-m", "app.worker"]
+    environment:
+      <<: *app-env
+      CHUNK_SIZE: ${CHUNK_SIZE:-1500}
+      CHUNK_OVERLAP: ${CHUNK_OVERLAP:-200}
+    volumes:
+      - uploads:/data/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    stop_grace_period: 2m # laisse finir le PDF en cours avant l'arrêt
+
+  # Postgres + pgvector : chunks, métadonnées, file de jobs. Aucun port publié.
+  db:
+    image: pgvector/pgvector:0.8.1-pg17
+    environment:
+      POSTGRES_USER: rag
+      POSTGRES_DB: rag
+      # Lettres et chiffres seulement : le mot de passe est repris tel quel dans DATABASE_URL
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rag-local-dev}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "rag", "-d", "rag"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  # Serveur de modèles (génération + embeddings), joint par l'API et le worker par son nom de
+  # service. Le GPU et le port pour le laptop sont ajoutés sur le PC fixe par
+  # deploy/compose.prod.yml ; sur le laptop, compose.override.yml ne le démarre pas.
   ollama:
     image: ollama/ollama:0.40.12
     volumes:
@@ -46,5 +95,5 @@ services:
 
 volumes:
   ollama:
-
-# Phases suivantes : db (pgvector) et worker — sans "ports:", joints par leur nom de service.
+  pgdata: # base : à sauvegarder (phase 8)
+  uploads: # PDF d'origine : permettent de tout réindexer

@@ -33,7 +33,7 @@ start_version() {
   return "${PIPESTATUS[0]}"
 }
 
-# Supprime les images de l'API, sauf les tags passés en arguments (en service et précédente)
+# Supprime les images de l'API (et du worker : la même), sauf les tags passés en arguments (en service et précédente)
 remove_old_images() {
   local name="$1" tag
   shift
@@ -94,8 +94,8 @@ if start_version "$target"; then
 fi
 
 echo "$target" >"$failed_file"
-log "ÉCHEC du déploiement de $target, dernières lignes de l'API :"
-"${compose[@]}" logs --tail 50 api 2>&1 | log_output
+log "ÉCHEC du déploiement de $target, dernières lignes de l'API et du worker :"
+"${compose[@]}" logs --tail 50 api worker 2>&1 | log_output
 
 # Retour arrière : on relance l'image précédente (le clone, lui, reste sur le nouveau commit)
 if [[ -z "$current" ]]; then
