@@ -5,22 +5,31 @@ Sur le PC fixe, dans WSL :
   bash deploy/compose.sh exec api python -m app.admin set-password lucas
   bash deploy/compose.sh exec api python -m app.admin disable-user bob
   bash deploy/compose.sh exec api python -m app.admin list-users
+  bash deploy/compose.sh exec api python -m app.admin create-db-reader dbeaver
 
 Le mot de passe est demandé sans être affiché, jamais passé en argument (il resterait dans
 l'historique du shell). create-user --no-password : compte sans mot de passe, pour qui
 n'utilise qu'une clé API (créée ensuite par un administrateur avec create-api-key).
+
+create-db-reader : compte Postgres en lecture seule (rôle rag_readonly), pour un client SQL ;
+relancé sur un compte existant, il en change le mot de passe.
 """
 
 import argparse
 import asyncio
 import getpass
+import re
 import sys
 
 import psycopg
+from psycopg import sql
 
 from app.auth import UserExists, create_user, hash_password, issue_token
 from app.config import get_settings
 from app.db import migrate
+
+# Nom d'un rôle Postgres créé par create-db-reader (pas de guillemets ni de majuscules)
+USERNAME_RE = re.compile(r"[a-z][a-z0-9_]{1,62}")
 
 
 def ask_password() -> str:
@@ -82,6 +91,30 @@ async def run(args: argparse.Namespace) -> None:
             uid = await user_id(conn, args.username)
             issued = await issue_token(conn, uid, kind="api_key", name=args.name)
             print(f"clé API de {args.username} (montrée une seule fois) :\n{issued.token}")
+        elif args.command == "create-db-reader":
+            if not USERNAME_RE.fullmatch(args.username):
+                sys.exit("nom invalide : minuscules, chiffres, « _ », 2 à 63 caractères")
+            cur = await conn.execute(
+                "SELECT rolsuper OR NOT pg_has_role(oid, 'rag_readonly', 'MEMBER')"
+                " FROM pg_roles WHERE rolname = %s",
+                (args.username,),
+            )
+            row = await cur.fetchone()
+            exists = row is not None
+            if exists and row[0]:
+                # Ne jamais toucher à un autre rôle (rag, super-utilisateur : l'API en dépend)
+                sys.exit(f"{args.username} existe et n'est pas un compte en lecture seule")
+            password = ask_password()
+            statement = (
+                "ALTER ROLE {} WITH LOGIN PASSWORD {}"
+                if exists
+                else "CREATE ROLE {} LOGIN PASSWORD {} IN ROLE rag_readonly"
+            )
+            await conn.execute(
+                sql.SQL(statement).format(sql.Identifier(args.username), sql.Literal(password))
+            )
+            verb = "mot de passe changé pour" if exists else "compte en lecture seule créé :"
+            print(f"{verb} {args.username} (base {conn.info.dbname})")
         elif args.command == "list-users":
             cur = await conn.execute(
                 "SELECT username, is_admin, disabled_at IS NOT NULL, created_at::date"
@@ -111,6 +144,11 @@ def main() -> None:
     key.add_argument("username")
     key.add_argument("--name", default="créée par admin")
     sub.add_parser("list-users", help="liste les comptes")
+    reader = sub.add_parser(
+        "create-db-reader",
+        help="compte Postgres en lecture seule (DBeaver), ou nouveau mot de passe",
+    )
+    reader.add_argument("username")
     args = parser.parse_args()
     args.username = getattr(args, "username", "").strip().lower() or None
     asyncio.run(run(args))

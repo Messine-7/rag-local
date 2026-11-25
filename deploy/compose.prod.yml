@@ -10,6 +10,14 @@ services:
     build: !reset null
     image: ghcr.io/${GHCR_OWNER:?GHCR_OWNER manquant}/rag-local-api:${APP_VERSION:?APP_VERSION manquant}
 
+  db:
+    # Localhost seulement, relayé dans le tailnet par « tailscale serve » pour un client SQL
+    # (DBeaver) sur le laptop, avec un compte en lecture seule (README, « Consulter la base »).
+    # Vérifier que le port est libre AVANT de déployer : un port pris fait échouer le
+    # déploiement et le retour arrière (sudo ss -ltnp | grep 5433).
+    ports:
+      - "127.0.0.1:5433:5432"
+
   ollama:
     # Localhost seulement, relayé dans le tailnet par « tailscale serve » pour le laptop de dev
     # (README). Ollama n'a pas d'authentification : ne jamais publier sur 0.0.0.0.

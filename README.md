@@ -94,6 +94,24 @@ bash deploy/compose.sh exec api python -m app.admin list-users   # aussi : set-p
 Changer un mot de passe ferme les sessions ouvertes ; désactiver un compte invalide tous ses
 jetons. Les documents gardent l'utilisateur qui les a envoyés (`uploaded_by`).
 
+## Consulter la base (DBeaver)
+
+Sur la machine hôte, Postgres est publié sur `127.0.0.1:5433` seulement, et relayé dans le
+tailnet. Compte Postgres en **lecture seule** (rôle `rag_readonly` : lecture de toutes les
+tables, sauf les empreintes de jetons et les hachages de mots de passe ; aucune écriture).
+Une fois, sur la machine hôte :
+
+```bash
+bash deploy/compose.sh exec api python -m app.admin create-db-reader dbeaver   # mot de passe demandé
+```
+
+```powershell
+tailscale serve --bg --tcp=5433 tcp://127.0.0.1:5433    # Windows, PowerShell
+```
+
+DBeaver : hôte `<machine-hôte>.<tailnet>.ts.net`, port `5433`, base `rag`, utilisateur
+`dbeaver`. Relancer `create-db-reader` sur le même nom change son mot de passe.
+
 ## Ingestion des PDF
 
 1. `POST /documents` range le PDF dans le volume `uploads` sous son empreinte SHA-256 (le même
