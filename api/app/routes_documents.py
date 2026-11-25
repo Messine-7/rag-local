@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, Upload
 from psycopg_pool import AsyncConnectionPool
 from pydantic import BaseModel
 
+from app.auth import CurrentUser
 from app.config import Settings, get_settings
 from app.documents import Document, create_document, get_document, list_documents
 
@@ -41,6 +42,7 @@ class DocumentOut(BaseModel):
     status: str  # pending → processing → ready, ou failed (voir error)
     error: str | None
     chunks: int
+    uploaded_by: str | None  # utilisateur qui l'a envoyé
     created_at: datetime
     updated_at: datetime
 
@@ -55,7 +57,7 @@ class DocumentOut(BaseModel):
     responses={200: {"description": "PDF déjà indexé (ou en cours) : rien n'est refait"}},
 )
 async def upload_document(
-    file: UploadFile, pool: Pool, settings: Config, response: Response
+    file: UploadFile, pool: Pool, settings: Config, response: Response, user: CurrentUser
 ) -> DocumentOut:
     """Envoie un PDF à indexer. Répond 202 dès que le PDF est dans la file d'ingestion ;
     suivre son état avec GET /documents/{id}."""
@@ -89,7 +91,7 @@ async def upload_document(
     filename = Path(file.filename or "document.pdf").name[:255]
     async with pool.connection() as conn:
         document, queued = await create_document(
-            conn, filename=filename, sha256=sha256, size_bytes=size
+            conn, filename=filename, sha256=sha256, size_bytes=size, created_by=user.id
         )
     if not queued:
         response.status_code = 200

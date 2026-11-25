@@ -30,6 +30,8 @@ class Settings:
     worker_poll_s: float = 3.0  # attente entre deux regards dans la file quand elle est vide
     job_timeout_s: int = 900  # au-delà, un job « running » est considéré comme abandonné
     job_max_attempts: int = 3
+    # Phase 5 : connexion
+    session_ttl_hours: int = 168  # durée d'un jeton de session (7 jours)
 
 
 def load_settings(env: Mapping[str, str]) -> Settings:
@@ -57,6 +59,7 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         worker_poll_s=float(env.get("WORKER_POLL_S", "3")),
         job_timeout_s=int(env.get("JOB_TIMEOUT_S", "900")),
         job_max_attempts=int(env.get("JOB_MAX_ATTEMPTS", "3")),
+        session_ttl_hours=int(env.get("SESSION_TTL_HOURS", "168")),
     )
 
 

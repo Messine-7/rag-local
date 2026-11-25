@@ -24,6 +24,7 @@ class Document:
     status: str
     error: str | None
     chunks: int
+    uploaded_by: str | None  # NULL pour les documents envoyés avant la phase 5
     created_at: datetime
     updated_at: datetime
 
@@ -31,8 +32,10 @@ class Document:
 _SELECT = """
 SELECT d.id, c.name AS collection, d.filename, d.sha256, d.size_bytes, d.pages, d.status,
        d.error, (SELECT count(*) FROM chunks ch WHERE ch.document_id = d.id)::int AS chunks,
-       d.created_at, d.updated_at
-FROM documents d JOIN collections c ON c.id = d.collection_id
+       u.username AS uploaded_by, d.created_at, d.updated_at
+FROM documents d
+JOIN collections c ON c.id = d.collection_id
+LEFT JOIN users u ON u.id = d.created_by
 """
 
 
@@ -54,6 +57,7 @@ async def create_document(
     filename: str,
     sha256: str,
     size_bytes: int,
+    created_by: int | None = None,
     collection: str = DEFAULT_COLLECTION,
 ) -> tuple[Document, bool]:
     """Enregistre le document et met un job d'ingestion dans la file.
@@ -71,12 +75,12 @@ async def create_document(
 
         cur = await conn.execute(
             """
-            INSERT INTO documents (collection_id, filename, sha256, size_bytes)
-            VALUES (%s, %s, %s, %s)
+            INSERT INTO documents (collection_id, filename, sha256, size_bytes, created_by)
+            VALUES (%s, %s, %s, %s, %s)
             ON CONFLICT (collection_id, sha256) DO NOTHING
             RETURNING id
             """,
-            (collection_id, filename, sha256, size_bytes),
+            (collection_id, filename, sha256, size_bytes, created_by),
         )
         row = await cur.fetchone()
         if row is not None:

@@ -53,19 +53,46 @@ sur le CPU (lent, plutôt pour de petits modèles).
 
 | Endpoint | Rôle |
 |---|---|
-| `GET /health` | état et commit déployé (`version`) |
+| `GET /health` | état et commit déployé (`version`) — seule route sans connexion |
+| `POST /auth/login` | nom + mot de passe → jeton de session (7 jours, `SESSION_TTL_HOURS`) |
+| `POST /auth/logout` | révoque le jeton utilisé |
+| `GET /auth/me` | l'utilisateur du jeton |
+| `POST /auth/api-keys` | crée une clé API personnelle (`name`), sans expiration ; valeur montrée une seule fois |
+| `GET /auth/api-keys` / `DELETE /auth/api-keys/{id}` | liste ou révoque ses clés API |
 | `POST /llm/generate` | génère une réponse à un prompt (`prompt`, `model`, `max_tokens`) — phase 3, remplacé par `/ask` en phase 5 |
 | `POST /llm/embed` | embeddings d'une liste de textes (`texts`) — phase 3 |
 | `POST /documents` | envoie un PDF à indexer (multipart, champ `file`) ; 202 : mis dans la file, 200 : déjà indexé |
 | `GET /documents` | liste des documents et état de leur ingestion |
 | `GET /documents/{id}` | état d'un document : `pending` → `processing` → `ready`, ou `failed` avec `error` |
 
-Documentation interactive : `/docs`.
+Documentation interactive : `/docs` (bouton « Authorize » pour y coller un jeton).
 
 ```bash
-curl -F "file=@rapport.pdf" https://<machine-hôte>/documents
-curl https://<machine-hôte>/documents/1
+TOKEN=rag_k_...   # clé API, ou jeton renvoyé par POST /auth/login
+curl -H "Authorization: Bearer $TOKEN" -F "file=@rapport.pdf" https://<machine-hôte>/documents
+curl -H "Authorization: Bearer $TOKEN" https://<machine-hôte>/documents/1
 ```
+
+## Connexion
+
+Toutes les routes sauf `/health` exigent `Authorization: Bearer <jeton>`, sinon 401. Deux
+sortes de jetons, stockés en base sous leur seule empreinte SHA-256 :
+
+- **jeton de session** (`rag_s_…`) : `POST /auth/login`, pour une interface ; expire ;
+- **clé API** (`rag_k_…`) : `POST /auth/api-keys`, pour le CLI et les scripts ; valable
+  jusqu'à révocation.
+
+Mots de passe hachés avec argon2. Pas d'inscription : les comptes se créent en ligne de
+commande, dans le conteneur de l'API (mot de passe demandé, jamais en argument) :
+
+```bash
+bash deploy/compose.sh exec api python -m app.admin create-user lucas --admin
+bash deploy/compose.sh exec api python -m app.admin create-api-key lucas --name laptop
+bash deploy/compose.sh exec api python -m app.admin list-users   # aussi : set-password, disable-user, enable-user
+```
+
+Changer un mot de passe ferme les sessions ouvertes ; désactiver un compte invalide tous ses
+jetons. Les documents gardent l'utilisateur qui les a envoyés (`uploaded_by`).
 
 ## Ingestion des PDF
 
@@ -213,10 +240,10 @@ avant le premier démarrage de la base : il est écrit dans le volume à sa cré
 ## Mesurer
 
 Latence et débit à 1, 4 et 8 requêtes simultanées, depuis n'importe quelle machine qui joint
-l'API (aucune dépendance) :
+l'API (aucune dépendance ; clé API dans `RAG_TOKEN` ou `--token`) :
 
 ```bash
-uv run scripts/bench_llm.py --url https://<machine-hôte> --model mistral-small3.2:24b --model gemma4:12b
+RAG_TOKEN=rag_k_... uv run scripts/bench_llm.py --url https://<machine-hôte> --model mistral-small3.2:24b --model gemma4:12b
 ```
 
 Sous Windows PowerShell 5.1, pour un affichage correct des accents et un fichier en UTF-8 :

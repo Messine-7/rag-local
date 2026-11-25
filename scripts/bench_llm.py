@@ -12,6 +12,7 @@ Le résultat est un tableau Markdown, à coller dans la documentation.
 
 import argparse
 import json
+import os
 import statistics
 import time
 import urllib.error
@@ -24,14 +25,14 @@ PROMPT = (
 )
 
 
-def one_request(url: str, model: str | None, max_tokens: int, timeout: float) -> dict:
+def one_request(url: str, token: str, model: str | None, max_tokens: int, timeout: float) -> dict:
     payload = {"prompt": PROMPT, "max_tokens": max_tokens}
     if model:
         payload["model"] = model
     request = urllib.request.Request(
         f"{url.rstrip('/')}/llm/generate",
         data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
         method="POST",
     )
     start = time.perf_counter()
@@ -58,7 +59,8 @@ def run_level(args: argparse.Namespace, model: str | None, concurrency: int) -> 
     with ThreadPoolExecutor(max_workers=concurrency) as pool:
         results = list(
             pool.map(
-                lambda _: one_request(args.url, model, args.max_tokens, args.timeout), range(n)
+                lambda _: one_request(args.url, args.token, model, args.max_tokens, args.timeout),
+                range(n),
             )
         )
     wall = time.perf_counter() - start
@@ -102,6 +104,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--url", default="http://localhost:8000", help="adresse de l'API")
     parser.add_argument(
+        "--token",
+        default=os.environ.get("RAG_TOKEN", ""),
+        help="jeton ou clé API (par défaut : variable RAG_TOKEN)",
+    )
+    parser.add_argument(
         "--model",
         action="append",
         help="modèle à mesurer (option répétable ; défaut : celui de l'API)",
@@ -113,6 +120,8 @@ def main() -> None:
     parser.add_argument("--max-tokens", type=int, default=256)
     parser.add_argument("--timeout", type=float, default=600.0, help="délai max par requête (s)")
     args = parser.parse_args()
+    if not args.token:
+        parser.error("jeton requis : --token ou variable RAG_TOKEN (l'API exige une connexion)")
 
     rows = []
     for model in args.model or [None]:

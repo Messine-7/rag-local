@@ -13,6 +13,7 @@ dependencies = [
     # (onnxruntime, numpy : plusieurs centaines de Mo) dont on n'a pas besoin.
     "pymupdf>=1.26,<2",
     "python-multipart>=0.0.9", # envoi de fichiers (POST /documents)
+    "argon2-cffi>=23.1", # hachage des mots de passe (connexion, phase 5)
 ]
 
 [dependency-groups]

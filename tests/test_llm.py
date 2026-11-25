@@ -1,6 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
+from app.auth import User, current_user
 from app.config import Settings, get_settings, load_settings
 from app.llm import Generation, LLMError, get_llm
 from app.main import app
@@ -42,6 +43,8 @@ def fake_llm():
     fake = FakeLLM()
     app.dependency_overrides[get_llm] = lambda: fake
     app.dependency_overrides[get_settings] = lambda: TEST_SETTINGS
+    # Utilisateur factice : ces tests n'ont pas de base (connexion testée dans test_auth.py)
+    app.dependency_overrides[current_user] = lambda: User(id=1, username="test", is_admin=False)
     yield fake
     app.dependency_overrides.clear()
 
@@ -87,6 +90,11 @@ def test_embed(fake_llm):
     assert body["model"] == "embed-test"
     assert body["dimensions"] == 3
     assert len(body["embeddings"]) == 2
+
+
+def test_llm_requires_a_token():
+    # Sans en-tête Authorization, refusé avant même de regarder la base
+    assert client.post("/llm/generate", json={"prompt": "Bonjour"}).status_code == 401
 
 
 def test_settings_defaults():
