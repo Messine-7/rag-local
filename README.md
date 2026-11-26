@@ -379,6 +379,35 @@ raisonnement invisible (c'est ce qu'a mesuré, à tort, le benchmark du 2026-11-
 4 requêtes simultanées, le débit plafonne (`NUM_PARALLEL`) et les suivantes attendent leur
 tour sans rien recevoir : 4 à 8 s avant le premier mot.
 
+### Qualité des réponses
+
+[scripts/eval_ask.py](scripts/eval_ask.py) pose un jeu de questions à `POST /ask`, pour
+chaque modèle, et mesure : document attendu parmi les extraits (et en tête, à la bonne page),
+citation du bon document, réponse juste selon un modèle juge (éléments attendus présents ;
+pour une question hors documents, refus sans invention), suivis de conversation, temps de
+réponse. Aucune dépendance.
+
+```bash
+RAG_TOKEN=rag_k_... python scripts/eval_ask.py --url https://<machine-hôte> \
+    --model mistral-small3.2:24b --model gemma4:12b --judge-model mistral-small3.2:24b
+```
+
+Questions dans `eval/questions.csv`, séparé par « ; » (tableur) : `id`, `question`,
+`reference_answer`, `source_document`, `pages`, `question_type` (`hors-corpus` : réponse absente
+des documents), `difficulty`, `expected_keywords` (séparés par « | »), et facultatifs
+`follow_up_of` (question de suivi) et `collections` ; détail en tête du script. Ou en TOML
+(modèle : `eval/questions.example.toml`). Le juge compare à la réponse de référence ; les
+mots-clés sont cherchés tels quels (indicatif). Résultats ventilés par difficulté et par type.
+
+`eval/questions.csv`, `eval/questions.toml` et `eval/results/` (réponses détaillées, en JSONL)
+ne sont pas versionnés : ils citent le contenu des documents. Chaque passe y enregistre le
+détail par modèle (`<date>-<modèle>.jsonl`) et la synthèse (`<date>-synthese.md`) ;
+`--report eval/results/<…>.jsonl …` refait la synthèse sans reposer les questions (mesures
+recalculées avec le fichier de questions actuel, verdicts du juge conservés). Options : `--only <id>` (quelques questions),
+`--no-judge` (recherche seulement), `--keep` (garder les conversations créées, supprimées
+sinon). Juge vérifié sur 7 cas types (correct, partiel, faux, refus) : 7/7 avec chacun des
+deux modèles. Garder le même juge pour comparer des modèles.
+
 ## Structure
 
 | Dossier | Rôle |
@@ -387,6 +416,7 @@ tour sans rien recevoir : 4 à 8 s avant le premier mot.
 | `client/` | client en ligne de commande (à venir) |
 | `tests/` | tests pytest |
 | `deploy/` | déploiement pull sur la machine hôte (`install-timer.sh` l'installe, `compose.sh` pour l'exploitation) |
-| `scripts/` | outils (benchmark du serveur de modèles) |
+| `scripts/` | outils : benchmark du serveur de modèles, évaluation des réponses (`eval_ask.py`) |
+| `eval/` | jeu de questions d'évaluation (modèle versionné, vraies questions et résultats ignorés) |
 | `docs/` | résultats de mesures (`benchmarks/`) |
 | `.github/workflows/` | CI et publication de l'image |

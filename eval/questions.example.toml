@@ -1,0 +1,53 @@
+# Jeu d'évaluation de POST /ask — modèle. Copier en eval/questions.toml (non versionné : il
+# cite le contenu des documents, et le repo est public), puis :
+#   RAG_TOKEN=rag_k_... python scripts/eval_ask.py --url https://<machine-hôte> \
+#       --model mistral-small3.2:24b --model gemma4:12b --judge-model mistral-small3.2:24b
+#
+# Viser 20 à 30 questions, variées :
+# - faits précis (chiffres, dates, noms) : la recherche plein texte doit les trouver ;
+# - questions formulées autrement que le document (synonymes) : la recherche par le sens ;
+# - réponses réparties sur plusieurs pages ou documents ;
+# - questions de suivi (« Et pour… ? », « Qui l'a signé ? ») : la reformulation ;
+# - 3 ou 4 questions hors documents (answerable = false) : le modèle doit dire qu'il ne sait pas.
+#
+# Champs d'une question ([[case]]) :
+#   id          identifiant court (facultatif, sinon q1, q2…)
+#   question    la question, telle qu'un utilisateur la poserait
+#   documents   noms de fichiers (comme envoyés) dont un doit être parmi les extraits retrouvés
+#   pages       pages où se trouve la réponse (facultatif)
+#   facts       éléments que la réponse doit contenir, jugés par le modèle juge (même sens
+#               suffit) ; un élément par fait vérifiable
+#   answerable  false : la réponse n'est pas dans les documents (défaut : true)
+#   collections limiter la recherche à ces collections (facultatif)
+# Questions de suivi : [[case.followup]], mêmes champs (sauf id), posées dans la même
+# conversation, dans l'ordre.
+
+[[case]]
+id = "roi-alpha"
+question = "Quel est le retour sur investissement du projet Alpha ?"
+documents = ["rapport-alpha-2025.pdf"]
+pages = [12]
+facts = ["18 %", "sur trois ans"]
+
+  [[case.followup]]
+  question = "Et pour le projet Bêta ?"
+  documents = ["rapport-beta-2025.pdf"]
+  facts = ["12 %"]
+
+[[case]]
+id = "contrat-maintenance-duree"
+question = "Combien de temps dure le contrat de maintenance signé avec Dupont SA ?"
+documents = ["contrat-dupont-maintenance.pdf"]
+facts = ["trois ans", "renouvelable par tacite reconduction"]
+
+[[case]]
+id = "teletravail-synonyme"
+# Formulée autrement que le document (« travail à distance ») : teste la recherche par le sens
+question = "Combien de jours peut-on travailler depuis chez soi ?"
+documents = ["accord-travail-distance.pdf"]
+facts = ["deux jours par semaine"]
+
+[[case]]
+id = "hors-documents"
+question = "Quelle est la capitale de l'Australie ?"
+answerable = false

@@ -21,3 +21,8 @@ venv/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Évaluation : questions et résultats citent le contenu des documents (repo public)
+eval/questions.toml
+eval/questions.csv
+eval/results/
