@@ -16,6 +16,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Form, HTTPException, Response, UploadFile
 from pydantic import BaseModel
 
+from app.audit import Audit
 from app.auth import CallerDB, CurrentUser
 from app.config import Settings, get_settings
 from app.documents import (
@@ -77,6 +78,7 @@ async def upload_document(
     settings: Config,
     response: Response,
     user: CurrentUser,
+    audit: Audit,
     collection: Annotated[str, Form()] = DEFAULT_COLLECTION,
 ) -> DocumentOut:
     """Envoie un PDF à indexer dans une collection (droit d'écriture requis). Répond 202 dès
@@ -125,6 +127,14 @@ async def upload_document(
         size_bytes=size,
         created_by=user.id,
         collection=collection,
+    )
+    await audit(
+        "document_upload",
+        document_id=document.id,
+        collection=collection,
+        filename=filename,
+        size_bytes=size,
+        queued=queued,  # false : déjà indexé, rien n'est refait
     )
     if not queued:
         response.status_code = 200

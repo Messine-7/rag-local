@@ -295,3 +295,55 @@ def test_rewrite_can_be_disabled(anon_client, world, fake_llm):
     finally:
         app.dependency_overrides.pop(get_settings, None)
     assert fake_llm.rewrites == []
+
+
+# --- Journal d'accès (phase 5.5) --------------------------------------------------------
+
+
+def test_ask_is_logged_without_the_question(anon_client, world, fake_llm, sql):
+    body = ask(anon_client, world["bob"], "Où tourne Ollama ?").json()
+    ask(anon_client, world["carol"], "Quels sont les salaires ?")  # aucun passage accessible
+    chunk_id, document_id = sql(
+        "SELECT c.id, c.document_id FROM chunks c JOIN collections k ON k.id = c.collection_id"
+        " WHERE k.name = 'tech'"
+    )[0]
+    rows = sql(
+        "SELECT u.username, l.detail FROM access_log l JOIN users u ON u.id = l.user_id"
+        " WHERE l.action = 'ask' ORDER BY l.id"
+    )
+    assert rows == [
+        (
+            "bob",
+            {
+                "conversation_id": body["conversation_id"],
+                "model": "mistral-small3.2:24b",
+                "collections_filter": None,
+                "collections": ["tech"],
+                "document_ids": [document_id],
+                "chunk_ids": [chunk_id],
+                "rewritten": False,
+            },
+        ),
+        (
+            "carol",
+            {
+                "conversation_id": rows[1][1]["conversation_id"],
+                "model": None,  # modèle pas appelé
+                "collections_filter": None,
+                "collections": [],
+                "document_ids": [],
+                "chunk_ids": [],
+                "rewritten": False,
+            },
+        ),
+    ]
+    # Ni la question ni la réponse : les conversations restent privées
+    assert "Ollama" not in str(sql("SELECT detail::text FROM access_log"))
+    # Le journal survit à la suppression de la conversation
+    anon_client.delete(f"/conversations/{body['conversation_id']}", headers=world["bob"])
+    assert len(sql("SELECT 1 FROM access_log WHERE action = 'ask'")) == 2
+    # « Qui a lu ce document ? »
+    readers = anon_client.get(
+        "/admin/access-log", params={"document_id": document_id}, headers=world["admin"]
+    ).json()
+    assert [e["username"] for e in readers] == ["bob"]

@@ -13,6 +13,9 @@ n'utilise qu'une clé API (créée ensuite par un administrateur avec create-api
 
 create-db-reader : compte Postgres en lecture seule (rôle rag_readonly), pour un client SQL ;
 relancé sur un compte existant, il en change le mot de passe.
+
+Chaque commande qui modifie quelque chose est inscrite au journal d'accès (action « admin »,
+"via": "cli", sans utilisateur : la ligne de commande n'a pas de jeton).
 """
 
 import argparse
@@ -24,6 +27,7 @@ import sys
 import psycopg
 from psycopg import sql
 
+from app.audit import record
 from app.auth import UserExists, create_user, hash_password, issue_token
 from app.config import get_settings
 from app.db import migrate
@@ -125,6 +129,11 @@ async def run(args: argparse.Namespace) -> None:
                     f for f, on in (("admin", is_admin), ("désactivé", disabled)) if on
                 )
                 print(f"{username:<24} {created}  {flags}")
+        if args.command != "list-users":  # arrivé ici : la commande a réussi
+            detail = {"op": args.command, "username": args.username, "via": "cli"}
+            if args.command == "create-api-key":
+                detail["name"] = args.name
+            await record(conn, "admin", user_id=None, detail=detail)
 
 
 def main() -> None:

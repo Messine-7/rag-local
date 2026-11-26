@@ -68,6 +68,7 @@ sur le CPU (lent, plutôt pour de petits modèles).
 | `POST /ask` | question sur les documents accessibles (`question`, `conversation_id`, `model`, `collections`, `stream`) ; réponse en SSE avec citations `[n]` |
 | `GET /conversations` / `GET /conversations/{id}` / `DELETE …` | ses conversations, une conversation avec ses messages, suppression |
 | `/admin/users`, `/admin/collections`, `/admin/groups…` | administration, réservée aux admins (voir « Gouvernance ») |
+| `GET /admin/access-log` | journal d'accès, réservé aux admins (voir « Journal d'accès ») |
 | `GET /documents/{id}` | état d'un document : `pending` → `processing` → `ready`, ou `failed` avec `error` |
 
 Documentation interactive : `/docs` (bouton « Authorize » pour y coller un jeton).
@@ -161,6 +162,27 @@ PATCH  /admin/users/{id}                       {"is_admin": true} / {"disabled":
 
 `API_DB_PASSWORD` (`.env`, obligatoire sur la machine hôte) : mot de passe de `rag_api`,
 reposé à chaque démarrage de l'API.
+
+### Journal d'accès
+
+Table `access_log` ([007_access_log.sql](api/app/migrations/007_access_log.sql)) : une ligne
+par question, connexion (réussie ou non), déconnexion, clé API créée ou révoquée, PDF envoyé
+et action d'administration (API ou `app.admin`), avec l'utilisateur, le jeton utilisé et
+l'adresse de l'appelant.
+
+- **Métadonnées seulement** : pour une question, le modèle, les collections, documents et
+  chunks lus, et si elle a été reformulée, jamais son texte ni la réponse. Les conversations
+  restent privées, admins compris. Ni mot de passe ni jeton.
+- Écrite dans la même transaction que l'action : pas d'action sans trace.
+- **Ajout seul** : `rag_api` peut écrire, pas modifier ni effacer ; chacun n'écrit qu'à son
+  nom (RLS). Le journal survit à la suppression d'une conversation.
+- Lecture réservée aux admins :
+
+```bash
+GET /admin/access-log?user_id=3&action=ask&since=2026-11-01T00:00:00Z&limit=100
+GET /admin/access-log?document_id=12           # qui a interrogé le document 12
+GET /admin/access-log?before_id=<plus petit id reçu>   # page suivante
+```
 
 ## Consulter la base (DBeaver)
 

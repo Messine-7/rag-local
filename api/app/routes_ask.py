@@ -29,6 +29,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from app.audit import Audit
 from app.auth import CallerDB, CurrentCaller, caller_connection
 from app.config import Settings, get_settings
 from app.conversations import (
@@ -135,6 +136,7 @@ async def ask(
     caller: CurrentCaller,
     llm: LLM,
     settings: Config,
+    audit: Audit,
 ) -> Any:
     """Pose une question sur les documents accessibles ; réponse avec citations [n]."""
     start = time.perf_counter()
@@ -183,6 +185,17 @@ async def ask(
     )
     citations = citations_of(passages)
     await add_message(conn, conversation_id, "user", req.question, search_query=search_query)
+    # Journal d'accès : ce qui a été lu, sans le texte de la question (conversations privées)
+    await audit(
+        "ask",
+        conversation_id=conversation_id,
+        model=model if passages else None,  # aucun passage : le modèle n'est pas appelé
+        collections_filter=req.collections,
+        collections=sorted({p.collection for p in passages}),
+        document_ids=sorted({p.document_id for p in passages}),
+        chunk_ids=[p.chunk_id for p in passages],
+        rewritten=search_query is not None,
+    )
     # La transaction de la requête est validée ici, avant la réponse (Depends scope="function") :
     # la réponse du modèle est enregistrée ensuite, sur une autre connexion.
 
