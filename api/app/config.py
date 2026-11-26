@@ -45,6 +45,11 @@ class Settings:
     ask_temperature: float = 0.1  # faible : réponses fidèles aux extraits
     # Modèles à raisonnement (gemma4) : "none" = répondre directement ; vide = ne rien envoyer
     ask_reasoning_effort: str = "none"
+    # Phase 5.4 : reformulation des questions de suivi avant la recherche
+    ask_rewrite: bool = True
+    # Vide : le modèle de la réponse (pas de changement de modèle dans la VRAM)
+    ask_rewrite_model: str = ""
+    ask_rewrite_max_tokens: int = 200
 
 
 def load_settings(env: Mapping[str, str]) -> Settings:
@@ -81,6 +86,9 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         ask_max_tokens=int(env.get("ASK_MAX_TOKENS", "1024")),
         ask_temperature=float(env.get("ASK_TEMPERATURE", "0.1")),
         ask_reasoning_effort=env.get("ASK_REASONING_EFFORT", "none"),
+        ask_rewrite=env.get("ASK_REWRITE", "true").strip().lower() not in ("0", "false", "no"),
+        ask_rewrite_model=env.get("ASK_REWRITE_MODEL", ""),
+        ask_rewrite_max_tokens=int(env.get("ASK_REWRITE_MAX_TOKENS", "200")),
     )
 
 

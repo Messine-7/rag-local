@@ -5,13 +5,15 @@ la Row-Level Security : chacun ne reçoit que des passages qu'il a le droit de l
 Base de test : voir conftest.py (ignorés sans TEST_DATABASE_URL).
 """
 
+import dataclasses
 import json
 
 import pytest
 
 from app.auth import create_user
+from app.config import get_settings
 from app.conversations import NO_PASSAGE_ANSWER
-from app.llm import LLMError, Usage, get_llm
+from app.llm import Generation, LLMError, Usage, get_llm
 from app.main import app
 from conftest import login_headers
 
@@ -23,6 +25,9 @@ class FakeLLM:
     def __init__(self) -> None:
         self.calls: list[dict] = []
         self.fail = False
+        self.rewrites: list[dict] = []  # appels de reformulation (questions de suivi)
+        self.rewrite_text = "Où est hébergée la base Postgres ?"
+        self.rewrite_fail = False
 
     async def embed(self, texts, *, model):
         return [VECTOR for _ in texts]
@@ -36,6 +41,12 @@ class FakeLLM:
         for part in ("D'après ", "le document ", "[1]."):
             yield part
         yield Usage(prompt_tokens=120, completion_tokens=8)
+
+    async def chat(self, messages, *, model, max_tokens, temperature, reasoning_effort):
+        self.rewrites.append({"messages": messages, "model": model, "temperature": temperature})
+        if self.rewrite_fail:
+            raise LLMError("Ollama injoignable")
+        return Generation(self.rewrite_text, prompt_tokens=50, completion_tokens=10)
 
 
 @pytest.fixture
@@ -180,6 +191,7 @@ def test_follow_up_sends_history(anon_client, world, fake_llm):
     ).json()
     assert second["conversation_id"] == first["conversation_id"]
     sent = fake_llm.calls[1]["messages"]
+    # La réponse porte sur la question d'origine (la reformulation ne sert qu'à la recherche)
     assert [(m["role"], m["content"]) for m in sent[1:]] == [
         ("user", "Où tourne Ollama ?"),
         ("assistant", "D'après le document [1]."),
@@ -208,3 +220,78 @@ def test_delete_conversation(anon_client, world, fake_llm, sql):
     assert anon_client.delete(path, headers=world["carol"]).status_code == 404
     assert anon_client.delete(path, headers=world["bob"]).status_code == 204
     assert sql("SELECT count(*) FROM messages") == [(0,)]
+
+
+# --- Reformulation des questions de suivi (phase 5.4) ------------------------------------
+
+
+def test_first_question_is_not_rewritten(anon_client, world, fake_llm):
+    body = ask(anon_client, world["bob"], "Où tourne Ollama ?").json()
+    assert fake_llm.rewrites == []
+    assert body["search_query"] is None
+
+
+def test_follow_up_is_rewritten_for_the_search(anon_client, world, fake_llm):
+    first = ask(anon_client, world["admin"], "Où tourne Ollama ?").json()
+    fake_llm.rewrite_text = "Question reformulée : « Grille des salaires 2026 ? »"
+    second = ask(
+        anon_client,
+        world["admin"],
+        "Et pour l'autre sujet ?",
+        conversation_id=first["conversation_id"],
+    ).json()
+    # Le modèle reçoit l'historique, sans les citations [n]
+    [call] = fake_llm.rewrites
+    prompt = call["messages"][1]["content"]
+    assert "Utilisateur : Où tourne Ollama ?" in prompt
+    assert "Assistant : D'après le document." in prompt
+    assert "Dernière question : Et pour l'autre sujet ?" in prompt
+    assert call["temperature"] == 0.0
+    assert call["model"] == "mistral-small3.2:24b"  # même modèle que la réponse
+    # La recherche porte sur la question reformulée (le plein texte classe « salaires » en tête)
+    assert second["search_query"] == "Grille des salaires 2026 ?"
+    assert second["citations"][0]["filename"] == "salaires.pdf"
+    assert fake_llm.calls[1]["messages"][-1]["content"] == "Et pour l'autre sujet ?"
+    # Gardée avec la question, pour juger la recherche
+    detail = anon_client.get(
+        f"/conversations/{first['conversation_id']}", headers=world["admin"]
+    ).json()
+    assert [m["search_query"] for m in detail["history"]] == [
+        None,
+        None,
+        "Grille des salaires 2026 ?",
+        None,
+    ]
+
+
+def test_streaming_meta_has_search_query(anon_client, world, fake_llm):
+    first = ask(anon_client, world["bob"], "Où tourne Ollama ?").json()
+    response = anon_client.post(
+        "/ask",
+        json={"question": "Et la base ?", "conversation_id": first["conversation_id"]},
+        headers=world["bob"],
+    )
+    meta = parse_sse(response.text)[0][1]
+    assert meta["search_query"] == "Où est hébergée la base Postgres ?"
+
+
+def test_rewrite_failure_falls_back_to_the_question(anon_client, world, fake_llm):
+    first = ask(anon_client, world["bob"], "Où tourne Ollama ?").json()
+    fake_llm.rewrite_fail = True
+    second = ask(
+        anon_client, world["bob"], "Et la base ?", conversation_id=first["conversation_id"]
+    )
+    assert second.status_code == 200
+    assert second.json()["search_query"] is None
+    assert second.json()["answer"] == "D'après le document [1]."
+
+
+def test_rewrite_can_be_disabled(anon_client, world, fake_llm):
+    settings = dataclasses.replace(get_settings(), ask_rewrite=False)
+    app.dependency_overrides[get_settings] = lambda: settings
+    try:
+        first = ask(anon_client, world["bob"], "Où tourne Ollama ?").json()
+        ask(anon_client, world["bob"], "Et la base ?", conversation_id=first["conversation_id"])
+    finally:
+        app.dependency_overrides.pop(get_settings, None)
+    assert fake_llm.rewrites == []

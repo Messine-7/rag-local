@@ -6,8 +6,9 @@ Assistant de questions-réponses sur des documents PDF et une base PostgreSQL, e
 auto-hébergé : modèles, base vectorielle et API tournent sur une machine personnelle,
 interrogée à distance via un réseau privé.
 
-> Projet en construction, phase par phase. Phase actuelle : ingestion des PDF (Postgres + pgvector, worker).
-> Phase précédente : serveurs de modèles (Ollama sur GPU), terminée — voir [Mesurer](#mesurer).
+> Projet en construction, phase par phase. Phase actuelle : questions, conversations, connexion
+> et gouvernance (phase 5). Phases précédentes : ingestion des PDF (Postgres + pgvector, worker),
+> serveurs de modèles (Ollama sur GPU) — voir [Mesurer](#mesurer).
 
 ## Architecture
 
@@ -103,13 +104,19 @@ jetons. Les documents gardent l'utilisateur qui les a envoyés (`uploaded_by`).
 `POST /ask` :
 
 1. conversation reprise (`conversation_id`) ou créée, question enregistrée ;
-2. **recherche hybride** parmi les chunks que l'appelant peut lire (RLS) : distance cosinus
+2. **question de suivi reformulée** : « Et pour 2025 ? » ne se comprend qu'avec la
+   conversation ; le modèle la réécrit d'abord en question autonome (température 0, même
+   modèle que la réponse sauf `ASK_REWRITE_MODEL`). Elle ne sert qu'à la recherche, le modèle
+   répond à la question d'origine ; elle est renvoyée (`search_query`) et gardée avec la
+   question. En cas d'échec, la recherche se fait sur la question d'origine.
+   `ASK_REWRITE=false` désactive l'étape ;
+3. **recherche hybride** parmi les chunks que l'appelant peut lire (RLS) : distance cosinus
    sur les embeddings (HNSW, `hnsw.iterative_scan` pour ne pas perdre de résultats avec le
    filtre des droits) et plein texte en français, fusionnés par Reciprocal Rank Fusion ;
    6 passages retenus (`ASK_TOP_K`) ;
-3. prompt : consignes (répondre seulement d'après les extraits, citer `[n]`), extraits
+4. prompt : consignes (répondre seulement d'après les extraits, citer `[n]`), extraits
    numérotés, 6 derniers messages de la conversation, question ;
-4. réponse en **Server-Sent Events** : `meta` (conversation, modèle, citations), `token`
+5. réponse en **Server-Sent Events** : `meta` (conversation, modèle, question reformulée, citations), `token`
    (morceaux de texte), `done` (id du message, tokens, durée) ou `error`. Enregistrée avec
    ses citations à la fin du flux. `"stream": false` : une seule réponse JSON.
 

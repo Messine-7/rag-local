@@ -49,6 +49,7 @@ class Message:
     prompt_tokens: int | None
     completion_tokens: int | None
     latency_ms: int | None
+    search_query: str | None  # question reformulée pour la recherche (5.4)
     created_at: datetime
 
 
@@ -95,7 +96,7 @@ async def get_messages(
     async with conn.cursor(row_factory=class_row(Message)) as cur:
         await cur.execute(
             "SELECT * FROM (SELECT id, role, content, model, citations, prompt_tokens,"
-            " completion_tokens, latency_ms, created_at FROM messages"
+            " completion_tokens, latency_ms, search_query, created_at FROM messages"
             " WHERE conversation_id = %s ORDER BY id DESC LIMIT %s) m ORDER BY id",
             (conversation_id, last),
         )
@@ -113,10 +114,12 @@ async def add_message(
     prompt_tokens: int | None = None,
     completion_tokens: int | None = None,
     latency_ms: int | None = None,
+    search_query: str | None = None,
 ) -> int:
     cur = await conn.execute(
         "INSERT INTO messages (conversation_id, role, content, model, citations, prompt_tokens,"
-        " completion_tokens, latency_ms) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+        " completion_tokens, latency_ms, search_query)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
         (
             conversation_id,
             role,
@@ -126,6 +129,7 @@ async def add_message(
             prompt_tokens,
             completion_tokens,
             latency_ms,
+            search_query,
         ),
     )
     row = await cur.fetchone()

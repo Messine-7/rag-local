@@ -51,12 +51,30 @@ class LLMClient:
         temperature: float,
         reasoning_effort: str | None = None,
     ) -> Generation:
-        """reasoning_effort : voir stream_chat."""
+        """Réponse à un seul message ; reasoning_effort : voir stream_chat."""
+        return await self.chat(
+            [{"role": "user", "content": prompt}],
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            reasoning_effort=reasoning_effort,
+        )
+
+    async def chat(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        model: str,
+        max_tokens: int,
+        temperature: float,
+        reasoning_effort: str | None = None,
+    ) -> Generation:
+        """Réponse en un bloc à une conversation ; reasoning_effort : voir stream_chat."""
         extra = {"reasoning_effort": reasoning_effort} if reasoning_effort else {}
         try:
             response = await self._client.chat.completions.create(
                 model=model,
-                messages=[{"role": "user", "content": prompt}],
+                messages=messages,  # type: ignore[arg-type]
                 max_tokens=max_tokens,
                 temperature=temperature,
                 **extra,  # type: ignore[arg-type]

@@ -2,14 +2,16 @@
 
 POST /ask, dans l'ordre :
 1. conversation reprise (conversation_id) ou créée ; question enregistrée ;
-2. embedding de la question (bge-m3), puis recherche hybride parmi les chunks que
+2. question de suivi : reformulée pour se comprendre seule (phase 5.4, app.rewrite) ;
+3. embedding de cette question (bge-m3), puis recherche hybride parmi les chunks que
    l'appelant peut lire (Row-Level Security) ;
-3. prompt : consignes, extraits numérotés, historique récent, question ;
-4. réponse du modèle au fil de l'eau (Server-Sent Events), puis enregistrée avec ses
+4. prompt : consignes, extraits numérotés, historique récent, question d'origine ;
+5. réponse du modèle au fil de l'eau (Server-Sent Events), puis enregistrée avec ses
    citations, ses tokens et sa durée.
 
 Évènements SSE (stream=true, par défaut) :
-  meta  {"conversation_id", "model", "citations": [...]}   avant le premier mot
+  meta  {"conversation_id", "model", "search_query", "citations": [...]}
+                                                            avant le premier mot
   token {"text"}                                            morceaux de la réponse
   done  {"message_id", "prompt_tokens", "completion_tokens", "latency_ms"}
   error {"detail"}                                          le modèle a échoué en route
@@ -43,6 +45,7 @@ from app.conversations import (
 )
 from app.llm import LLMClient, LLMError, Usage, get_llm
 from app.retrieval import search
+from app.rewrite import rewrite_question
 
 router = APIRouter(tags=["questions"])
 
@@ -78,6 +81,7 @@ class AskResponse(BaseModel):
     message_id: int
     answer: str
     model: str
+    search_query: str | None  # question reformulée pour la recherche, si question de suivi
     citations: list[Citation]
     prompt_tokens: int
     completion_tokens: int
@@ -101,6 +105,7 @@ class MessageOut(BaseModel):
     prompt_tokens: int | None
     completion_tokens: int | None
     latency_ms: int | None
+    search_query: str | None
     created_at: datetime
 
 
@@ -148,23 +153,36 @@ async def ask(
         conversation_id = await create_conversation(conn, caller.user.id, req.question.strip())
         history = []
 
-    # 2. Passages utiles, parmi ceux que l'appelant peut lire
+    # 2. Question de suivi : reformulée pour que la recherche la comprenne seule
+    search_query = None
+    if settings.ask_rewrite:
+        search_query = await rewrite_question(
+            llm,
+            req.question,
+            history,
+            model=settings.ask_rewrite_model or model,
+            max_tokens=settings.ask_rewrite_max_tokens,
+            reasoning_effort=settings.ask_reasoning_effort or None,
+        )
+    query = search_query or req.question
+
+    # 3. Passages utiles, parmi ceux que l'appelant peut lire
     try:
-        [vector] = await llm.embed([req.question], model=settings.embed_model)
+        [vector] = await llm.embed([query], model=settings.embed_model)
     except LLMError as exc:
         raise HTTPException(
             status_code=503, detail=f"serveur de modèles indisponible : {exc}"
         ) from exc
     passages = await search(
         conn,
-        question=req.question,
+        question=query,
         question_vector=vector,
         top_k=settings.ask_top_k,
         candidates=settings.ask_candidates,
         collections=req.collections,
     )
     citations = citations_of(passages)
-    await add_message(conn, conversation_id, "user", req.question)
+    await add_message(conn, conversation_id, "user", req.question, search_query=search_query)
     # La transaction de la requête est validée ici, avant la réponse (Depends scope="function") :
     # la réponse du modèle est enregistrée ensuite, sur une autre connexion.
 
@@ -227,6 +245,7 @@ async def ask(
             message_id=message_id,
             answer=text,
             model=model,
+            search_query=search_query,
             citations=[Citation(**c) for c in citations],
             prompt_tokens=usage.prompt_tokens,
             completion_tokens=usage.completion_tokens,
@@ -235,7 +254,13 @@ async def ask(
 
     async def events() -> AsyncIterator[str]:
         yield _sse(
-            "meta", {"conversation_id": conversation_id, "model": model, "citations": citations}
+            "meta",
+            {
+                "conversation_id": conversation_id,
+                "model": model,
+                "search_query": search_query,
+                "citations": citations,
+            },
         )
         parts: list[str] = []
         usage = Usage(0, 0)
